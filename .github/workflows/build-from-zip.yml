@@ -2,6 +2,11 @@ name: Build IPA from source zip
 
 on:
   workflow_dispatch:
+  push:
+    branches: [ main, master ]
+    paths:
+      - 'ios-music-source.zip'
+      - '.github/workflows/build-from-zip.yml'
 
 jobs:
   build:
