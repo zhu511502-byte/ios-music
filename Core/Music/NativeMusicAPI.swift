@@ -11,7 +11,7 @@ final class NativeMusicAPI: ObservableObject, @unchecked Sendable {
     private let session: URLSession
     private let defaultUserAgent = "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/69.0.3497.100 Safari/537.36"
     private let cookieLock = NSLock()
-    private var neteaseCookie: String?
+    private var neteaseCookieHeader: String?
 
     init() {
         let configuration = URLSessionConfiguration.default
@@ -27,7 +27,7 @@ final class NativeMusicAPI: ObservableObject, @unchecked Sendable {
     /// music.163.com requests, never to other platform hosts.
     func setNeteaseCookie(_ value: String?) {
         cookieLock.lock()
-        neteaseCookie = value
+        neteaseCookieHeader = value
         cookieLock.unlock()
     }
 
@@ -35,7 +35,7 @@ final class NativeMusicAPI: ObservableObject, @unchecked Sendable {
     func neteaseCookie() -> String? {
         cookieLock.lock()
         defer { cookieLock.unlock() }
-        return neteaseCookie
+        return neteaseCookieHeader
     }
 
 
