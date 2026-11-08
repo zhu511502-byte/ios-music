@@ -26,7 +26,9 @@ struct RootView: View {
                 .tag(3)
         }
         .tint(AppTheme.accent)
-        .background(AppBackgroundView(), ignoresSafeAreaEdges: .all)
+        .background {
+            AppBackgroundView()
+        }
         .task {
             await model.start()
         }

@@ -38,11 +38,10 @@ final class NativeMusicAPI: ObservableObject, @unchecked Sendable {
         return neteaseCookie
     }
 
-    private func currentNeteaseCookie() -> String? {
-        cookieLock.lock()
-        defer { cookieLock.unlock() }
-        return neteaseCookie
+    private func currentNeteaseCookieValue() -> String? {
+        neteaseCookie()
     }
+
 
     // MARK: - Public API
 
@@ -149,7 +148,7 @@ final class NativeMusicAPI: ObservableObject, @unchecked Sendable {
             request.setValue(value, forHTTPHeaderField: key)
         }
         if url.host?.contains("music.163.com") == true,
-           let cookie = currentNeteaseCookie(),
+           let cookie = currentNeteaseCookieValue(),
            request.value(forHTTPHeaderField: "Cookie") == nil {
             request.setValue(cookie, forHTTPHeaderField: "Cookie")
         }

@@ -63,19 +63,20 @@ actor LyricsService {
         } else if let url = lyricURL(track) {
             parsed = LyricsParser.parse(try await fetchText(url))
         } else {
-            parsed = LyricsParser.parse(try await platformLyrics(track))
+            var yrcLyrics: Lyrics?
+            if track.source == "wy" {
+                yrcLyrics = try await neteaseYRCLyrics(track)
+            }
+            if let yrcLyrics {
+                parsed = yrcLyrics
+            } else {
+                parsed = LyricsParser.parse(try await platformLyrics(track))
+            }
         }
 
         guard !parsed.isEmpty else { throw LyricsError.notFound }
         cache[key] = parsed
         return parsed
-    }
-
-    /// Cache + return a Lyrics produced inside `platformLyrics` (yrc path).
-    private func cacheable(_ lyrics: Lyrics, for track: MusicInfo) throws -> Lyrics {
-        guard !lyrics.isEmpty else { throw LyricsError.notFound }
-        cache[track.id] = lyrics
-        return lyrics
     }
 
     // MARK: - Sources
@@ -121,20 +122,10 @@ actor LyricsService {
         case "wy":
             let id = track.songID ?? ""
             guard !id.isEmpty else { throw LyricsError.notFound }
-            // interface3 + yv=1 returns the enhanced yrc (word-timed) lyrics
-            // when the song has them; fall back to plain LRC otherwise.
-            let url = try makeURL("https://interface3.music.163.com/api/song/lyric", [
-                ("os", "pc"), ("id", id), ("lv", "1"), ("kv", "1"), ("tv", "-1"), ("yv", "1")
+            let url = try makeURL("https://music.163.com/api/song/lyric", [
+                ("id", id), ("lv", "1"), ("kv", "1"), ("tv", "-1")
             ])
-            var headers = ["Referer": "https://music.163.com/"]
-            if let cookie = NativeMusicAPI.shared.neteaseCookie() {
-                headers["Cookie"] = cookie
-            }
-            let body = try await fetchJSON(url, headers: headers)
-            if let yrc = MusicParse.string(MusicParse.dictionary(body["yrc"])["lyric"]), !yrc.isEmpty,
-               let parsed = YRCParser.parse(yrc), !parsed.isEmpty {
-                return try await cacheable(parsed, for: track)
-            }
+            let body = try await fetchJSON(url, headers: ["Referer": "https://music.163.com/"])
             return MusicParse.string(MusicParse.dictionary(body["lrc"])["lyric"])
 
         case "tx":
@@ -199,6 +190,33 @@ actor LyricsService {
         default:
             throw LyricsError.notFound
         }
+    }
+
+    // MARK: - NetEase enhanced lyrics (yrc)
+
+    /// Fetches NetEase word-timed yrc lyrics. Returns nil when the song has
+    /// no yrc data, so the caller falls back to plain LRC.
+    private func neteaseYRCLyrics(_ track: MusicInfo) async throws -> Lyrics? {
+        guard track.source == "wy", let id = track.songID, !id.isEmpty else { return nil }
+        let url = try makeURL("https://interface3.music.163.com/api/song/lyric", [
+            ("os", "pc"), ("id", id), ("lv", "1"), ("kv", "1"), ("tv", "-1"), ("yv", "1")
+        ])
+        var headers = ["Referer": "https://music.163.com/"]
+        if let cookie = NativeMusicAPI.shared.neteaseCookie() {
+            headers["Cookie"] = cookie
+        }
+        let body = try await fetchJSON(url, headers: headers)
+        let yrcRoot = MusicParse.dictionary(body)["yrc"]
+        var yrcText: String = ""
+        if let root = yrcRoot {
+            yrcText = MusicParse.string(MusicParse.dictionary(root)["lyric"])
+        }
+        guard !yrcText.isEmpty,
+              let parsed = YRCParser.parse(yrcText),
+              !parsed.isEmpty else {
+            return nil
+        }
+        return parsed
     }
 
     // MARK: - HTTP
@@ -313,7 +331,7 @@ enum LyricsParser {
     /// duration across its characters (weighted: CJK/full-width count double).
     /// Real enhanced formats (krc/yrc) would replace this when available.
     private static func wordTimings(for text: String, start: Double, end: Double?) -> [Double] {
-        guard let start, start.isFinite else { return [] }
+        guard start.isFinite else { return [] }
         let characters = Array(text)
         guard !characters.isEmpty else { return [] }
         let duration: Double
