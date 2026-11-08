@@ -1,0 +1,64 @@
+name: Build IPA from source zip
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Extract source
+        run: |
+          set -euo pipefail
+          rm -rf src
+          mkdir -p src
+          unzip -q ios-music-source.zip -d src
+          ls -la src
+
+      - name: Show Xcode
+        run: xcodebuild -version
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        working-directory: src
+        run: xcodegen generate
+
+      - name: Build app
+        working-directory: src
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project LxPlayer.xcodeproj \
+            -scheme LxPlayer \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
+
+      - name: Package unsigned IPA
+        run: |
+          set -euo pipefail
+          APP_PATH="$RUNNER_TEMP/DerivedData/Build/Products/Release-iphoneos/LxPlayer.app"
+          test -d "$APP_PATH"
+          rm -rf "$RUNNER_TEMP/Payload"
+          mkdir -p "$RUNNER_TEMP/Payload"
+          cp -R "$APP_PATH" "$RUNNER_TEMP/Payload/"
+          cd "$RUNNER_TEMP"
+          zip -qry LxPlayer-unsigned.ipa Payload
+          ls -lh LxPlayer-unsigned.ipa
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: LxPlayer-unsigned-ipa
+          path: ${{ runner.temp }}/LxPlayer-unsigned.ipa
+          if-no-files-found: error
