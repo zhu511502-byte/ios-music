@@ -594,6 +594,7 @@ enum YRCParser {
             var end: Double
             var text: String
             var offsets: [Double]
+            var syllables: [LyricSyllable]
         }
 
         var items: [Item] = []
