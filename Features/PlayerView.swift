@@ -4,10 +4,11 @@ import UIKit
 struct PlayerView: View {
     @EnvironmentObject private var player: PlaybackCoordinator
     @EnvironmentObject private var library: LibraryStore
+    @EnvironmentObject private var settings: SettingsStore
     @EnvironmentObject private var theme: ThemeStore
     @Environment(\.dismiss) private var dismiss
 
-    @State private var page = 0
+    @State private var showLyrics = false
     @State private var showAddToPlaylist = false
     @State private var autoPresentedLandscape = false
 
@@ -27,18 +28,13 @@ struct PlayerView: View {
 
     var body: some View {
         GeometryReader { geometry in
-            TabView(selection: $page) {
-                playerContent
-                    .tag(0)
-
-                LyricsView(isActive: page == 1, onClose: {
-                    withAnimation(.easeInOut(duration: 0.28)) { page = 0 }
-                })
-                .tag(1)
-            }
-            .tabViewStyle(.page(indexDisplayMode: .never))
-            .onAppear { updateOrientation(geometry.size) }
-            .onChange(of: geometry.size) { updateOrientation($0) }
+            playerContent
+                .onAppear { updateOrientation(geometry.size) }
+                .onChange(of: geometry.size) { updateOrientation($0) }
+        }
+        .fullScreenCover(isPresented: $showLyrics) {
+            LyricsView()
+                .environmentObject(player)
         }
         .sheet(isPresented: $showAddToPlaylist) {
             if let track = player.currentTrack {
@@ -117,10 +113,10 @@ struct PlayerView: View {
             autoPresentedLandscape = false
             return
         }
-        guard !autoPresentedLandscape, page == 0 else { return }
+        guard !autoPresentedLandscape, !showLyrics else { return }
         autoPresentedLandscape = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-            withAnimation(.easeInOut(duration: 0.35)) { page = 1 }
+            showLyrics = true
         }
     }
 
@@ -128,15 +124,39 @@ struct PlayerView: View {
 
     private var background: some View {
         ZStack {
-            CoverMeshBackground(url: player.currentTrack?.picURL, intensity: 0.9, artworkOpacity: 0.55, animated: page == 0)
+            Color.black
+
+            if let custom = settings.backgroundImage {
+                GeometryReader { geometry in
+                    Image(uiImage: custom)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: geometry.size.width, height: geometry.size.height)
+                        .clipped()
+                        .blur(radius: max(settings.backgroundBlur, 0.5))
+                        .opacity(settings.backgroundOpacity)
+                }
+                .ignoresSafeArea()
+            } else if let url = player.currentTrack?.picURL {
+                GeometryReader { geometry in
+                    AsyncImage(url: url) { phase in
+                        if let image = phase.image {
+                            image.resizable()
+                                .scaledToFill()
+                                .frame(width: geometry.size.width, height: geometry.size.height)
+                                .clipped()
+                                .blur(radius: 65)
+                                .opacity(0.45)
+                        }
+                    }
+                }
+                .ignoresSafeArea()
+            }
+
+            FlowingGlowView(intensity: 0.35)
 
             LinearGradient(
-                stops: [
-                    .init(color: .black.opacity(0.18), location: 0),
-                    .init(color: .black.opacity(0.10), location: 0.34),
-                    .init(color: .black.opacity(0.46), location: 0.74),
-                    .init(color: .black.opacity(0.88), location: 1)
-                ],
+                colors: [.black.opacity(0.12), .black.opacity(0.42), .black],
                 startPoint: .top,
                 endPoint: .bottom
             )
@@ -167,7 +187,7 @@ struct PlayerView: View {
 
             Menu {
                 Button {
-                    withAnimation(.easeInOut(duration: 0.28)) { page = 1 }
+                    showLyrics = true
                 } label: {
                     Label("歌词", systemImage: "quote.bubble")
                 }
@@ -250,7 +270,7 @@ struct PlayerView: View {
     private var utilityControls: some View {
         HStack(spacing: 54) {
             Button {
-                withAnimation(.easeInOut(duration: 0.28)) { page = 1 }
+                showLyrics = true
             } label: {
                 Image(systemName: "quote.bubble")
                     .font(.system(size: 20, weight: .medium))

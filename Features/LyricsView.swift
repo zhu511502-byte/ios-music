@@ -444,14 +444,45 @@ struct LyricsView: View {
 
     private var background: some View {
         ZStack {
-            CoverMeshBackground(url: player.currentTrack?.picURL, intensity: 0.95, artworkOpacity: 0.55, animated: isActive)
+            Color.black
+
+            if let custom = settings.backgroundImage {
+                GeometryReader { geometry in
+                    Image(uiImage: custom)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: geometry.size.width, height: geometry.size.height)
+                        .clipped()
+                        .blur(radius: max(settings.backgroundBlur, 0.5))
+                        .scaleEffect(1.08)
+                        .opacity(settings.backgroundOpacity)
+                }
+                .ignoresSafeArea()
+            } else if let url = player.currentTrack?.picURL {
+                GeometryReader { geometry in
+                    AsyncImage(url: url) { phase in
+                        if let image = phase.image {
+                            image.resizable()
+                                .scaledToFill()
+                                .frame(width: geometry.size.width, height: geometry.size.height)
+                                .clipped()
+                                .blur(radius: 65)
+                                .scaleEffect(1.12)
+                                .opacity(0.55)
+                        }
+                    }
+                }
+                .ignoresSafeArea()
+            }
+
+            FlowingGlowView(intensity: 0.5)
 
             LinearGradient(
                 stops: [
-                    .init(color: .black.opacity(0.20), location: 0),
-                    .init(color: .black.opacity(0.16), location: 0.35),
-                    .init(color: .black.opacity(0.48), location: 0.72),
-                    .init(color: .black.opacity(0.86), location: 1)
+                    .init(color: .black.opacity(0.12), location: 0),
+                    .init(color: .black.opacity(0.35), location: 0.45),
+                    .init(color: .black.opacity(0.78), location: 0.8),
+                    .init(color: .black.opacity(0.92), location: 1)
                 ],
                 startPoint: .top,
                 endPoint: .bottom
@@ -459,14 +490,6 @@ struct LyricsView: View {
             .ignoresSafeArea()
         }
         .ignoresSafeArea()
-    }
-
-    private func close() {
-        if let onClose {
-            onClose()
-        } else {
-            dismiss()
-        }
     }
 
     // MARK: - Auto immersive
