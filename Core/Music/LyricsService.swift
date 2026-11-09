@@ -84,6 +84,15 @@ actor LyricsService {
             parsed = nil
         }
 
+        // Platforms that only returned plain LRC still have no real
+        // per-character timing. Kugou's public KRC search is a good fallback:
+        // match title + singer, download the encrypted KRC and use its real
+        // word offsets. This is what makes QQ/Kuwo lyrics high precision.
+        if parsed?.isWordTimed != true, track.source != "local",
+           let krc = await kugouKRCSearchLyrics(for: track) {
+            parsed = krc
+        }
+
         if parsed?.isEmpty != false {
             parsed = await fallbackLyrics(for: track)
         }
@@ -308,6 +317,59 @@ actor LyricsService {
             ("ver", "1"), ("client", "pc"), ("id", id),
             ("accesskey", accessKey), ("fmt", "krc"), ("charset", "utf8")
         ]),
+              let download = try? await fetchJSON(downloadURL) else {
+            return nil
+        }
+        let content = MusicParse.string(download["content"])
+        guard let data = Data(base64Encoded: content),
+              let raw = LyricCrypto.decryptKRC(data),
+              let parsed = KRCParser.parse(raw),
+              !parsed.isEmpty else {
+            return nil
+        }
+        return parsed
+    }
+
+    /// Cross-platform KRC search for platforms without their own enhanced
+    /// lyric format. Returns nil when no confident title/singer match exists.
+    private func kugouKRCSearchLyrics(for track: MusicInfo) async -> Lyrics? {
+        let title = track.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty else { return nil }
+        let singer = track.singer.trimmingCharacters(in: .whitespacesAndNewlines)
+        let keyword = [title, singer].filter { !$0.isEmpty }.joined(separator: " ")
+
+        guard let searchURL = try? makeURL("https://krcs.kugou.com/search", [
+            ("ver", "1"), ("man", "yes"), ("client", "mobi"),
+            ("keyword", keyword), ("duration", ""), ("hash", "")
+        ]),
+              let search = try? await fetchJSON(searchURL) else {
+            return nil
+        }
+        let candidates = MusicParse.objects(search["candidates"])
+        guard !candidates.isEmpty else { return nil }
+
+        let normalizedTitle = normalize(title)
+        let normalizedSinger = normalize(singer)
+        let matched = candidates.first { item in
+            let itemTitle = normalize(MusicParse.string(item["song"]))
+            let itemSinger = normalize(MusicParse.string(item["singer"]))
+            let titleOK = itemTitle == normalizedTitle
+                || itemTitle.contains(normalizedTitle)
+                || normalizedTitle.contains(itemTitle)
+            let singerOK = normalizedSinger.isEmpty
+                || itemSinger.contains(normalizedSinger)
+                || normalizedSinger.contains(itemSinger)
+            return titleOK && singerOK
+        }
+        guard let candidate = matched ?? candidates.first else { return nil }
+
+        let id = MusicParse.string(candidate["id"])
+        let accessKey = MusicParse.string(candidate["accesskey"])
+        guard !id.isEmpty, !accessKey.isEmpty,
+              let downloadURL = try? makeURL("https://lyrics.kugou.com/download", [
+                ("ver", "1"), ("client", "pc"), ("id", id),
+                ("accesskey", accessKey), ("fmt", "krc"), ("charset", "utf8")
+              ]),
               let download = try? await fetchJSON(downloadURL) else {
             return nil
         }

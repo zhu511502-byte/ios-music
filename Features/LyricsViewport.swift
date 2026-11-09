@@ -7,6 +7,8 @@ import UIKit
 /// smoother than the hand-positioned renderer, while the spring restores the
 /// old "line glides into the middle" feel.
 struct LyricsViewportView: View {
+    @EnvironmentObject private var settings: SettingsStore
+
     let lyrics: Lyrics
     let clock: PlaybackClock
     let lyricsClock: LyricsClock
@@ -111,9 +113,9 @@ struct LyricsViewportView: View {
     @ViewBuilder
     private func lyricLine(_ line: LyricLine, isActive: Bool) -> some View {
         if isActive, karaoke, line.time != nil {
-            KaraokeTextLayerView(line: line, clock: lyricsClock, fontSize: activeSize, isPlaying: isPlaying)
+            KaraokeTextLayerView(line: line, clock: lyricsClock, fontSize: activeSize, isPlaying: isPlaying, letterSpacing: CGFloat(settings.lyricsLetterSpacing))
                     .frame(height: activeSize * 1.2)
-                .padding(.vertical, 13)
+                .padding(.vertical, isActive ? 13 * CGFloat(settings.lyricsHighlightHeight) : 13)
                 .contentShape(Rectangle())
                 .onTapGesture {
                     onInteraction()
@@ -127,10 +129,11 @@ struct LyricsViewportView: View {
             Text(line.text)
                 .font(.system(size: isActive ? activeSize : inactiveSize, weight: .bold))
                 .foregroundStyle(isActive ? Color.white : Color.white.opacity(0.34))
-                .lineSpacing(5)
+                .lineSpacing(CGFloat(settings.lyricsLineSpacing))
+                .tracking(CGFloat(settings.lyricsLetterSpacing))
                 .multilineTextAlignment(.leading)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.vertical, 13)
+                .padding(.vertical, isActive ? 13 * CGFloat(settings.lyricsHighlightHeight) : 13)
                 .scaleEffect(isActive ? 1 : 0.97, anchor: .leading)
                 .opacity(isActive ? 1 : 0.92)
                 .animation(.easeInOut(duration: 0.22), value: isActive)

@@ -11,6 +11,7 @@ struct PlayerView: View {
     @State private var showLyrics = false
     @State private var showAddToPlaylist = false
     @State private var autoPresentedLandscape = false
+    @State private var isLandscape = false
 
     private var artworkSize: CGFloat {
         min(360, max(220, UIScreen.main.bounds.width - 48))
@@ -109,6 +110,7 @@ struct PlayerView: View {
     /// kunyin's adaptive player and slide straight into the lyric view.
     private func updateOrientation(_ size: CGSize) {
         let landscape = size.width > size.height
+        isLandscape = landscape
         guard landscape else {
             autoPresentedLandscape = false
             return
@@ -153,7 +155,9 @@ struct PlayerView: View {
                 .ignoresSafeArea()
             }
 
-            FlowingGlowView(intensity: 0.35)
+            if !isLandscape {
+                FlowingGlowView(intensity: 0.35)
+            }
 
             LinearGradient(
                 colors: [.black.opacity(0.12), .black.opacity(0.42), .black],

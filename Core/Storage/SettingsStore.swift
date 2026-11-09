@@ -39,6 +39,20 @@ final class SettingsStore: ObservableObject {
     @Published var karaokeLyrics: Bool {
         didSet { defaults.set(karaokeLyrics, forKey: Keys.karaokeLyrics) }
     }
+
+    /// Lyric page appearance (edited from the ellipsis menu on that page).
+    @Published var lyricsFontSize: Double {
+        didSet { defaults.set(lyricsFontSize, forKey: Keys.lyricsFontSize) }
+    }
+    @Published var lyricsLineSpacing: Double {
+        didSet { defaults.set(lyricsLineSpacing, forKey: Keys.lyricsLineSpacing) }
+    }
+    @Published var lyricsLetterSpacing: Double {
+        didSet { defaults.set(lyricsLetterSpacing, forKey: Keys.lyricsLetterSpacing) }
+    }
+    @Published var lyricsHighlightHeight: Double {
+        didSet { defaults.set(lyricsHighlightHeight, forKey: Keys.lyricsHighlightHeight) }
+    }
     /// Connect to the LX sync server automatically on launch.
     @Published var autoSync: Bool {
         didSet {
@@ -77,6 +91,10 @@ final class SettingsStore: ObservableObject {
         static let backgroundDim = "settings.backgroundDim"
         static let backgroundOpacity = "settings.backgroundOpacity"
         static let karaokeLyrics = "settings.karaokeLyrics"
+        static let lyricsFontSize = "settings.lyricsFontSize"
+        static let lyricsLineSpacing = "settings.lyricsLineSpacing"
+        static let lyricsLetterSpacing = "settings.lyricsLetterSpacing"
+        static let lyricsHighlightHeight = "settings.lyricsHighlightHeight"
         static let autoSync = "settings.autoSync"
         static let themeColorHex = "settings.themeColorHex"
     }
@@ -105,6 +123,18 @@ final class SettingsStore: ObservableObject {
         } else {
             karaokeLyrics = true
         }
+        let lyricFont = defaults.object(forKey: Keys.lyricsFontSize) != nil
+            ? defaults.double(forKey: Keys.lyricsFontSize) : 30
+        lyricsFontSize = (22...40).contains(lyricFont) ? lyricFont : 30
+        let lyricLine = defaults.object(forKey: Keys.lyricsLineSpacing) != nil
+            ? defaults.double(forKey: Keys.lyricsLineSpacing) : 5
+        lyricsLineSpacing = (0...18).contains(lyricLine) ? lyricLine : 5
+        let lyricLetter = defaults.object(forKey: Keys.lyricsLetterSpacing) != nil
+            ? defaults.double(forKey: Keys.lyricsLetterSpacing) : 0
+        lyricsLetterSpacing = (-1...4).contains(lyricLetter) ? lyricLetter : 0
+        let lyricHighlight = defaults.object(forKey: Keys.lyricsHighlightHeight) != nil
+            ? defaults.double(forKey: Keys.lyricsHighlightHeight) : 1
+        lyricsHighlightHeight = (0.8...1.6).contains(lyricHighlight) ? lyricHighlight : 1
         if defaults.object(forKey: Keys.autoSync) != nil {
             autoSync = defaults.bool(forKey: Keys.autoSync)
         } else {
@@ -153,6 +183,14 @@ final class SettingsStore: ObservableObject {
         return UIGraphicsImageRenderer(size: target).image { _ in
             image.draw(in: CGRect(origin: .zero, size: target))
         }
+    }
+
+    func resetLyricsAppearance() {
+        lyricsFontSize = 30
+        lyricsLineSpacing = 5
+        lyricsLetterSpacing = 0
+        lyricsHighlightHeight = 1
+        karaokeLyrics = true
     }
 
     var deviceName: String {

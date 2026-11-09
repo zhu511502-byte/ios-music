@@ -16,15 +16,16 @@ struct KaraokeTextLayerView: UIViewRepresentable {
     let clock: LyricsClock
     let fontSize: CGFloat
     let isPlaying: Bool
+    let letterSpacing: CGFloat
 
     func makeUIView(context: Context) -> KaraokeTextLayerUIView {
         let view = KaraokeTextLayerUIView()
-        view.configure(line: line, clock: clock, fontSize: fontSize, isPlaying: isPlaying)
+        view.configure(line: line, clock: clock, fontSize: fontSize, isPlaying: isPlaying, letterSpacing: letterSpacing)
         return view
     }
 
     func updateUIView(_ uiView: KaraokeTextLayerUIView, context: Context) {
-        uiView.configure(line: line, clock: clock, fontSize: fontSize, isPlaying: isPlaying)
+        uiView.configure(line: line, clock: clock, fontSize: fontSize, isPlaying: isPlaying, letterSpacing: letterSpacing)
     }
 }
 
@@ -40,6 +41,7 @@ final class KaraokeTextLayerUIView: UIView {
     private var line: LyricLine?
     private var fontSize: CGFloat = 30
     private var isPlaying = false
+    private var letterSpacing: CGFloat = 0
 
     private var charOffsets: [CGFloat] = []
     private var times: [Double] = []
@@ -51,6 +53,7 @@ final class KaraokeTextLayerUIView: UIView {
     private var lastLayoutWidth: CGFloat = 0
     private var lastLineID: Int = -1
     private var lastFontSize: CGFloat = 0
+    private var lastLetterSpacing: CGFloat = 0
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -97,19 +100,21 @@ final class KaraokeTextLayerUIView: UIView {
         maskLayer.opacity = 0
     }
 
-    func configure(line: LyricLine, clock: LyricsClock, fontSize: CGFloat, isPlaying: Bool) {
+    func configure(line: LyricLine, clock: LyricsClock, fontSize: CGFloat, isPlaying: Bool, letterSpacing: CGFloat) {
         let lineChanged = self.line?.id != line.id
         let fontChanged = self.fontSize != fontSize
+        let spacingChanged = self.letterSpacing != letterSpacing
         let clockChanged = self.clock !== clock
 
         self.line = line
         self.fontSize = fontSize
         self.isPlaying = isPlaying
+        self.letterSpacing = letterSpacing
 
         if clockChanged || cancellable == nil {
             subscribe(to: clock)
         }
-        if lineChanged || fontChanged || bounds.width != lastLayoutWidth {
+        if lineChanged || fontChanged || spacingChanged || bounds.width != lastLayoutWidth {
             rebuildIfPossible()
         }
         if !isPlaying {
@@ -171,17 +176,18 @@ final class KaraokeTextLayerUIView: UIView {
 
     private func rebuildIfPossible() {
         guard bounds.width > 1, let line else { return }
-        guard line.id != lastLineID || fontSize != lastFontSize || bounds.width != lastLayoutWidth else { return }
+        guard line.id != lastLineID || fontSize != lastFontSize || letterSpacing != lastLetterSpacing || bounds.width != lastLayoutWidth else { return }
 
         lastLineID = line.id
         lastFontSize = fontSize
+        lastLetterSpacing = letterSpacing
         lastLayoutWidth = bounds.width
 
         let available = bounds.width
         let baseFont = UIFont.systemFont(ofSize: fontSize, weight: .bold)
         let baseAttr = NSAttributedString(
             string: line.text,
-            attributes: [.font: baseFont, .foregroundColor: UIColor.white]
+            attributes: [.font: baseFont, .foregroundColor: UIColor.white, .kern: letterSpacing]
         )
         let baseCT = CTLineCreateWithAttributedString(baseAttr)
         let measured = CGFloat(CTLineGetTypographicBounds(baseCT, nil, nil, nil))
@@ -191,11 +197,11 @@ final class KaraokeTextLayerUIView: UIView {
 
         let base = NSAttributedString(
             string: line.text,
-            attributes: [.font: font, .foregroundColor: UIColor.white.withAlphaComponent(0.30)]
+            attributes: [.font: font, .foregroundColor: UIColor.white.withAlphaComponent(0.30), .kern: letterSpacing]
         )
         let highlight = NSAttributedString(
             string: line.text,
-            attributes: [.font: font, .foregroundColor: UIColor.white]
+            attributes: [.font: font, .foregroundColor: UIColor.white, .kern: letterSpacing]
         )
         let ctLine = CTLineCreateWithAttributedString(highlight)
 

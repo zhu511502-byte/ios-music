@@ -18,6 +18,7 @@ struct LyricsView: View {
     @State private var loadedTrackID: String?
     @State private var isImmersive = false
     @State private var showAddToPlaylist = false
+    @State private var showLyricsSettings = false
     @StateObject private var interaction = LyricsInteractionState()
     @State private var isLandscape = false
 
@@ -67,6 +68,9 @@ struct LyricsView: View {
                     .environmentObject(library)
             }
         }
+        .sheet(isPresented: $showLyricsSettings) {
+            LyricsSettingsView()
+        }
     }
 
     // MARK: - Layouts
@@ -79,13 +83,13 @@ struct LyricsView: View {
             lyricsContent(isLandscape: false)
                 .id("lyrics-content-portrait")
 
-            if !isImmersive {
-                VStack(spacing: 0) {
-                    portraitHeader
-                    Spacer(minLength: 0)
+            VStack(spacing: 0) {
+                portraitHeader(immersive: isImmersive)
+                Spacer(minLength: 0)
+                if !isImmersive {
                     portraitFooter
+                        .transition(.opacity)
                 }
-                .transition(.opacity)
             }
         }
     }
@@ -110,14 +114,16 @@ struct LyricsView: View {
 
     // MARK: - Header / panels
 
-    private var portraitHeader: some View {
+    private func portraitHeader(immersive: Bool) -> some View {
         HStack(alignment: .center, spacing: 12) {
-            Button { closeLyrics() } label: {
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .frame(width: 34, height: 34)
-                    .background(.white.opacity(0.12), in: Circle())
+            if !immersive {
+                Button { closeLyrics() } label: {
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: 34, height: 34)
+                        .background(.white.opacity(0.12), in: Circle())
+                }
             }
 
             ArtworkView(url: player.currentTrack?.picURL, size: 46, cornerRadius: 9)
@@ -139,7 +145,7 @@ struct LyricsView: View {
             loveButton
             moreMenu
         }
-        .padding(.horizontal, 16)
+        .padding(.horizontal, immersive ? 12 : 16)
         .padding(.top, 6)
         .padding(.bottom, 6)
     }
@@ -192,7 +198,7 @@ struct LyricsView: View {
             transportRow
                 .padding(.top, 10)
 
-            volumeRow
+            progressRow
                 .padding(.top, 8)
 
             bottomControls
@@ -209,7 +215,7 @@ struct LyricsView: View {
 
             transportRow
 
-            volumeRow
+            progressRow
 
             bottomControls
         }
@@ -248,22 +254,10 @@ struct LyricsView: View {
         .foregroundStyle(.white)
     }
 
-    private var volumeRow: some View {
-        HStack(spacing: 8) {
-            Image(systemName: player.volume == 0 ? "speaker.slash.fill" : "speaker.fill")
-                .font(.system(size: 10))
-            Slider(
-                value: Binding(
-                    get: { Double(player.volume) },
-                    set: { player.setVolume($0) }
-                ),
-                in: 0...1
-            )
-            .tint(.white.opacity(0.5))
-            Image(systemName: "speaker.wave.3.fill")
-                .font(.system(size: 10))
+    private var progressRow: some View {
+        LyricsProgressView(clock: player.clock, duration: player.duration) { value in
+            player.seek(to: value)
         }
-        .foregroundStyle(.white.opacity(0.38))
     }
 
     private var bottomControls: some View {
@@ -332,6 +326,11 @@ struct LyricsView: View {
 
     private var moreMenu: some View {
         Menu {
+            Button {
+                showLyricsSettings = true
+            } label: {
+                Label("歌词自定义", systemImage: "slider.horizontal.3")
+            }
             Button {
                 withAnimation(.easeInOut(duration: 0.25)) { isImmersive = true }
             } label: {
@@ -405,8 +404,8 @@ struct LyricsView: View {
                         lyrics: lyrics,
                         clock: player.clock,
                         lyricsClock: player.lyricsClock,
-                        activeSize: isLandscape ? 31 : 30,
-                        inactiveSize: isLandscape ? 24 : 23,
+                        activeSize: CGFloat(settings.lyricsFontSize),
+                        inactiveSize: CGFloat(settings.lyricsFontSize * 0.78),
                         karaoke: settings.karaokeLyrics || lyrics.isWordTimed,
                         isPlaying: player.isPlaying,
                         isImmersive: isImmersive,
@@ -579,6 +578,50 @@ private struct PlainLyricsView: View {
     }
 }
 
+
+
+/// Progress slider for the lyric page footer. Kept separate from the view so
+/// the 4 Hz clock update only redraws the slider, not the whole lyric page.
+private struct LyricsProgressView: View {
+    @ObservedObject var clock: PlaybackClock
+    let duration: Double
+    let onSeek: (Double) -> Void
+
+    @State private var dragValue: Double = 0
+    @State private var isDragging = false
+
+    var body: some View {
+        VStack(spacing: 4) {
+            Slider(
+                value: Binding(
+                    get: { isDragging ? dragValue : min(clock.time, max(duration, 1)) },
+                    set: { dragValue = $0 }
+                ),
+                in: 0...max(duration, 1),
+                onEditingChanged: { editing in
+                    isDragging = editing
+                    if !editing { onSeek(dragValue) }
+                }
+            )
+            .tint(.white)
+
+            HStack {
+                Text(timeText(isDragging ? dragValue : clock.time))
+                Spacer()
+                Text("-" + timeText(max(0, duration - (isDragging ? dragValue : clock.time))))
+            }
+            .font(.caption2.monospacedDigit())
+            .foregroundStyle(.white.opacity(0.48))
+        }
+        .onAppear { dragValue = clock.time }
+    }
+
+    private func timeText(_ seconds: Double) -> String {
+        guard seconds.isFinite, seconds >= 0 else { return "0:00" }
+        let total = Int(seconds)
+        return String(format: "%d:%02d", total / 60, total % 60)
+    }
+}
 
 /// Reference box for the last touch time. Deliberately has no `@Published`
 /// storage: updating it from a 60 Hz drag must not rebuild the lyric screen.
