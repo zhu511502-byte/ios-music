@@ -425,7 +425,9 @@ enum YRCParser {
 
             let clean = MusicParse.htmlDecode(text.trimmingCharacters(in: .whitespaces))
             guard !clean.isEmpty else { continue }
-            guard startMs > 0 else { continue } // metadata header rows
+            // yrc metadata header rows are `[0,0](...)`; real lyric lines have
+            // a non-zero duration (a line at 0:00 is valid).
+            guard durationMs > 0 else { continue }
             items.append(Item(start: start, end: end, text: clean, offsets: offsets))
         }
 

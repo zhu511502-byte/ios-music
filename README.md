@@ -69,7 +69,8 @@
 - `Core/Storage/`：JSON 文件库、音源脚本管理、Keychain。
 - `Core/Services/NetEaseAccount.swift`：网易云扫码/手机号登录、账号歌单同步。
 - `Core/Player/`：AVPlayer、后台音频、锁屏控制、播放模式、音量。
-- `Features/PlayerView.swift`：全屏 Apple Music 风格播放页、专辑封面/专辑名、全屏滚动歌词、音量、播放模式、收藏、添加到歌单。
+- `Features/PlayerView.swift`：全屏 Apple Music 风格播放页、专辑封面/专辑名、音质选择、音量、播放模式、收藏、添加到歌单。
+- `Features/LyricsView.swift`：Apple Music 风格歌词页（横屏左侧封面/控制、竖屏顶栏+底栏）、逐字高亮、全屏沉浸模式与退出按钮。
 - `Features/MiniPlayerView.swift`：液态玻璃迷你播放器，显示专辑封面、歌名/歌手、实时歌词和播放进度。
 - `Core/JS/`：`LXSourceRuntime`（JavaScriptCore + 官方 preload）、播放解析。
 - `Core/Sync/`：RSA/AES/MD5、gzip、message2call、同步客户端。
