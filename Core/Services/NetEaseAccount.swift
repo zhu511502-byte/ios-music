@@ -78,14 +78,17 @@ final class NetEaseAccount: ObservableObject {
         pollTask = Task { [weak self] in
             guard let self else { return }
             do {
-                let start = try await self.requestJSON(
+                let start = try await NetEaseEAPI.perform(
                     path: "/api/login/qrcode/unikey",
-                    method: "POST",
-                    query: [("type", "1")]
+                    data: ["type": 3]
                 )
-                guard MusicParse.int(start["code"]) == 200,
-                      let key = MusicParse.string(start["unikey"]).nilIfEmpty else {
-                    throw NetEaseAccountError.loginFailed(MusicParse.string(start["message"]))
+                guard MusicParse.int(start.json["code"]) == 200,
+                      let key = MusicParse.string(start.json["unikey"]).nilIfEmpty else {
+                    throw NetEaseAccountError.loginFailed(
+                        MusicParse.string(start.json["message"]).isEmpty
+                            ? "二维码接口没有返回 unikey"
+                            : MusicParse.string(start.json["message"])
+                    )
                 }
 
                 self.qrContent = "https://music.163.com/login?codekey=\(key)"
@@ -95,12 +98,12 @@ final class NetEaseAccount: ObservableObject {
                     try await Task.sleep(nanoseconds: 2_000_000_000)
                     if Task.isCancelled { return }
 
-                    let poll = try await self.requestJSON(
+                    let poll = try await NetEaseEAPI.perform(
                         path: "/api/login/qrcode/client/login",
-                        method: "GET",
-                        query: [("key", key), ("type", "1")]
+                        data: ["key": key, "type": 3],
+                        musicU: self.currentMusicU
                     )
-                    switch MusicParse.int(poll["code"]) {
+                    switch MusicParse.int(poll.json["code"]) {
                     case 800:
                         self.qrStatus = "二维码已过期，请重新生成"
                         self.isWorking = false
@@ -110,15 +113,23 @@ final class NetEaseAccount: ObservableObject {
                     case 802:
                         self.qrStatus = "已扫码，请在网易云音乐里确认登录"
                     case 803:
+                        if let cookie = poll.cookie {
+                            self.saveCookie(cookie)
+                        } else if self.currentMusicU == nil {
+                            self.qrStatus = "登录成功但未拿到 MUSIC_U"
+                            self.errorMessage = "登录接口没有返回 MUSIC_U，请重试"
+                            self.isWorking = false
+                            return
+                        }
                         self.qrStatus = "登录成功"
                         self.qrContent = nil
                         await self.refreshProfile()
                         self.isWorking = false
                         return
                     default:
-                        self.qrStatus = MusicParse.string(poll["message"]).isEmpty
+                        self.qrStatus = MusicParse.string(poll.json["message"]).isEmpty
                             ? "等待扫码…"
-                            : MusicParse.string(poll["message"])
+                            : MusicParse.string(poll.json["message"])
                     }
                 }
 
@@ -152,20 +163,25 @@ final class NetEaseAccount: ObservableObject {
         errorMessage = nil
         defer { isWorking = false }
         do {
-            let body = try await requestJSON(
+            let body = try await NetEaseEAPI.perform(
                 path: "/api/login/cellphone",
-                method: "POST",
-                form: [
+                data: [
                     "phone": phone,
                     "password": MusicCrypto.md5Hex(password),
                     "rememberLogin": "true",
                     "countrycode": "86"
-                ]
+                ],
+                musicU: currentMusicU
             )
-            guard MusicParse.int(body["code"]) == 200 else {
+            guard MusicParse.int(body.json["code"]) == 200 else {
                 throw NetEaseAccountError.loginFailed(
-                    MusicParse.string(body["message"]).isEmpty ? "手机号或密码错误" : MusicParse.string(body["message"])
+                    MusicParse.string(body.json["message"]).isEmpty
+                        ? "手机号或密码错误"
+                        : MusicParse.string(body.json["message"])
                 )
+            }
+            if let cookie = body.cookie {
+                saveCookie(cookie)
             }
             await refreshProfile()
         } catch {
@@ -177,7 +193,16 @@ final class NetEaseAccount: ObservableObject {
 
     func refreshProfile(silent: Bool = false) async {
         do {
-            let body = try await requestJSON(path: "/api/nuser/account/get")
+            var body = try await requestJSON(path: "/api/nuser/account/get")
+            if MusicParse.dictionary(body["profile"]).nilIfEmpty == nil,
+               let musicU = currentMusicU {
+                let eapi = try await NetEaseEAPI.perform(
+                    path: "/api/nuser/account/get",
+                    data: [:],
+                    musicU: musicU
+                )
+                body = eapi.json
+            }
             guard let profile = MusicParse.dictionary(body["profile"]).nilIfEmpty,
                   let account = MusicParse.dictionary(body["account"]).nilIfEmpty else {
                 throw NetEaseAccountError.notLoggedIn
@@ -202,10 +227,18 @@ final class NetEaseAccount: ObservableObject {
     func loadPlaylists() async {
         guard let uid = uid else { return }
         do {
-            let body = try await requestJSON(
+            var body = try await requestJSON(
                 path: "/api/user/playlist",
                 query: [("uid", uid), ("limit", "1000"), ("offset", "0")]
             )
+            if MusicParse.objects(body["playlist"]).isEmpty, let musicU = currentMusicU {
+                let eapi = try await NetEaseEAPI.perform(
+                    path: "/api/user/playlist",
+                    data: ["uid": uid, "limit": 1000, "offset": 0],
+                    musicU: musicU
+                )
+                body = eapi.json
+            }
             playlists = MusicParse.objects(body["playlist"]).compactMap { item in
                 let id = MusicParse.string(item["id"])
                 guard !id.isEmpty else { return nil }
@@ -267,6 +300,44 @@ final class NetEaseAccount: ObservableObject {
         }
         syncStatus = "已同步 \(imported) 个歌单"
         return imported
+    }
+
+    // MARK: - Cookie helpers
+
+    private var currentMusicU: String? {
+        guard let cookieHeader else { return nil }
+        for part in cookieHeader.split(separator: ";") {
+            let item = part.trimmingCharacters(in: .whitespaces)
+            if item.hasPrefix("MUSIC_U=") {
+                return String(item.dropFirst("MUSIC_U=".count))
+            }
+        }
+        return nil
+    }
+
+    private func saveCookie(_ value: String) {
+        var pieces: [String: String] = [:]
+        if let cookieHeader {
+            for part in cookieHeader.split(separator: ";") {
+                let item = part.trimmingCharacters(in: .whitespaces)
+                guard let equals = item.firstIndex(of: "=") else { continue }
+                let name = String(item[..<equals])
+                let val = String(item[item.index(after: equals)...])
+                if !name.isEmpty { pieces[name] = val }
+            }
+        }
+        for part in value.split(separator: ";") {
+            let item = part.trimmingCharacters(in: .whitespaces)
+            guard let equals = item.firstIndex(of: "=") else { continue }
+            let name = String(item[..<equals])
+            let val = String(item[item.index(after: equals)...])
+            if !name.isEmpty { pieces[name] = val }
+        }
+        let merged = pieces.map { "\($0.key)=\($0.value)" }.joined(separator: "; ")
+        guard !merged.isEmpty else { return }
+        cookieHeader = merged
+        client.setNeteaseCookie(merged)
+        KeychainStore.set(Data(merged.utf8), account: "netease.cookie")
     }
 
     // MARK: - HTTP / cookies

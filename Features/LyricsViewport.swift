@@ -2,14 +2,15 @@ import SwiftUI
 import UIKit
 import Foundation
 
-/// Kunyin-style lyric viewport.
+/// Native-scrolling lyric viewport.
 ///
-/// Instead of putting every line in a `ScrollView` and animating one shared
-/// scroll offset, each line is absolutely positioned and receives its own
-/// transition (duration + delay). When the active line changes the rows move
-/// with a soft stagger, while scale / blur / opacity follow the distance from
-/// the active row. That is what removes the rigid "whole page jumps" feeling
-/// of the old implementation.
+/// The previous version positioned every row by hand and animated each row on
+/// the main thread. That looked good in a demo but made an old iPhone drop
+/// frames as soon as the finger touched the screen. This version lets
+/// `ScrollView` do the scrolling (UIKit-backed, 120 Hz ProMotion aware) and
+/// only asks SwiftUI to move when the active line actually changes. Karaoke
+/// fill is still driven by the isolated 10 Hz clock, so a playing song does
+/// not re-render the whole lyric page.
 struct LyricsViewportView: View {
     let lyrics: Lyrics
     let clock: PlaybackClock
@@ -23,19 +24,9 @@ struct LyricsViewportView: View {
     let onExitImmersive: () -> Void
 
     @State private var activeIndex: Int?
-    @State private var heights: [CGFloat] = []
-    @State private var tops: [CGFloat] = []
-    @State private var contentHeight: CGFloat = 0
-    @State private var viewportWidth: CGFloat = 0
-    @State private var viewportHeight: CGFloat = 0
-    @State private var offset: CGFloat = 0
-    @State private var isDragging = false
-    @State private var dragBase: CGFloat = 0
-    @State private var scrollDirection = 0
-    @State private var resumeFollowAt = Date.distantPast
-    @State private var resumeToken = UUID()
+    @StateObject private var scrollState = LyricScrollState()
 
-    private let anchorFraction: CGFloat = 0.44
+    private let anchor = UnitPoint(x: 0.5, y: 0.44)
 
     private func index(at time: Double) -> Int? {
         lyrics.lines.lastIndex { ($0.time ?? -1) <= time + 0.05 }
@@ -43,43 +34,62 @@ struct LyricsViewportView: View {
 
     var body: some View {
         GeometryReader { geometry in
-            let size = geometry.size
-            ZStack(alignment: .topLeading) {
-                Color.clear
+            ScrollViewReader { proxy in
+                ScrollView(showsIndicators: false) {
+                    VStack(alignment: .leading, spacing: 0) {
+                        Color.clear
+                            .frame(height: max(80, geometry.size.height * 0.42))
 
-                ForEach(visibleIndices, id: \.self) { index in
-                    lineView(lyrics.lines[index], index: index)
-                        .frame(width: max(1, size.width - horizontalPadding * 2),
-                               height: height(at: index),
-                               alignment: .leading)
-                        .offset(x: horizontalPadding, y: top(at: index) + offset)
-                        .animation(isDragging ? nil : scrollAnimation(for: index), value: offset)
-                        .animation(.easeInOut(duration: 0.42), value: activeIndex)
+                        ForEach(lyrics.lines) { line in
+                            lyricLine(line, isActive: line.id == activeIndex)
+                                .id(line.id)
+                        }
+
+                        Color.clear
+                            .frame(height: max(140, geometry.size.height * 0.55))
+                    }
+                    .padding(.horizontal, horizontalPadding)
                 }
-            }
-            .frame(width: size.width, height: size.height, alignment: .topLeading)
-            .clipped()
-            .mask(edgeMask)
-            .contentShape(Rectangle())
-            .simultaneousGesture(dragGesture)
-            .onAppear {
-                rebuild(width: size.width, height: size.height, animated: false)
-            }
-            .onChange(of: geometry.size) { newSize in
-                rebuild(width: newSize.width, height: newSize.height, animated: false)
-            }
-            .onChange(of: lyrics) { _ in
-                activeIndex = index(at: clock.time) ?? 0
-                scrollDirection = 0
-                rebuild(width: geometry.size.width, height: geometry.size.height, animated: false)
-            }
-            .onReceive(clock.$time) { time in
-                updateActiveIndex(time)
-            }
-            .onChange(of: isImmersive) { _ in
-                // Header/footer are overlays, so the viewport itself never
-                // changes size. This only corrects a pending layout change.
-                recenter(animated: true)
+                .mask(edgeMask)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    if isImmersive { onExitImmersive() }
+                }
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 12)
+                        .onChanged { _ in
+                            scrollState.lastInteraction = Date()
+                            if !scrollState.isUserScrolling { scrollState.isUserScrolling = true }
+                        }
+                        .onEnded { _ in
+                            scrollState.lastInteraction = Date()
+                            scrollState.isUserScrolling = false
+                            scheduleResume(proxy: proxy)
+                        }
+                )
+                .onAppear {
+                    let initial = index(at: clock.time) ?? 0
+                    activeIndex = initial
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                        proxy.scrollTo(initial, anchor: anchor)
+                    }
+                }
+                .onReceive(clock.$time) { time in
+                    updateActiveIndex(time, proxy: proxy)
+                }
+                .onChange(of: geometry.size) { _ in
+                    guard let index = activeIndex else { return }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        proxy.scrollTo(index, anchor: anchor)
+                    }
+                }
+                .onChange(of: lyrics) { _ in
+                    let initial = index(at: clock.time) ?? 0
+                    activeIndex = initial
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+                        proxy.scrollTo(initial, anchor: anchor)
+                    }
+                }
             }
         }
     }
@@ -87,14 +97,7 @@ struct LyricsViewportView: View {
     // MARK: - Lines
 
     @ViewBuilder
-    private func lineView(_ line: LyricLine, index: Int) -> some View {
-        let distance = index - (activeIndex ?? index)
-        let gaussian = exp(-Double(distance * distance) / 18.0)
-        let isActive = index == activeIndex
-        let isPlayed = (activeIndex ?? 0) > index
-        let scale: CGFloat = isActive ? 1 : 0.94 + 0.05 * CGFloat(gaussian)
-        let opacity = isActive ? 1.0 : (isPlayed ? 0.44 : 0.56) * (0.86 + 0.14 * gaussian)
-
+    private func lyricLine(_ line: LyricLine, isActive: Bool) -> some View {
         Button {
             if isImmersive {
                 onExitImmersive()
@@ -105,6 +108,7 @@ struct LyricsViewportView: View {
             Group {
                 if isActive, karaoke, line.hasWordTiming {
                     KaraokeLyricLine(line: line, clock: lyricsClock, fontSize: activeSize)
+                        .frame(height: activeSize * 1.2)
                 } else {
                     Text(line.text)
                         .font(.system(size: isActive ? activeSize : inactiveSize, weight: .bold))
@@ -114,41 +118,14 @@ struct LyricsViewportView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
-            .opacity(opacity)
-            .scaleEffect(scale, anchor: .leading)
+            .opacity(isActive ? 1 : 0.46)
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
         }
         .buttonStyle(LyricPressButtonStyle())
+        .frame(minHeight: activeSize * 1.2 + 26, alignment: .leading)
+        .animation(.easeInOut(duration: 0.22), value: isActive)
         .disabled(line.time == nil && !isImmersive)
-    }
-
-    /// Only the rows around the viewport are materialised. A full lyric file
-    /// can hold 100+ lines and every row carries a blur/scale layer, so
-    /// rendering all of them would make the 4 Hz clock update expensive.
-    private var visibleIndices: [Int] {
-        guard tops.count == lyrics.lines.count, heights.count == lyrics.lines.count else {
-            return Array(lyrics.lines.indices)
-        }
-        let topEdge = -offset - 200
-        let bottomEdge = -offset + viewportHeight + 200
-        var result: [Int] = []
-        for index in lyrics.lines.indices {
-            let lineTop = tops[index]
-            let lineBottom = lineTop + heights[index]
-            if lineBottom >= topEdge && lineTop <= bottomEdge {
-                result.append(index)
-            }
-        }
-        return result
-    }
-
-    private func height(at index: Int) -> CGFloat {
-        heights.indices.contains(index) ? heights[index] : activeSize * 1.4 + 26
-    }
-
-    private func top(at index: Int) -> CGFloat {
-        tops.indices.contains(index) ? tops[index] : 0
     }
 
     private var edgeMask: some View {
@@ -164,130 +141,42 @@ struct LyricsViewportView: View {
         )
     }
 
-    // MARK: - Motion
+    // MARK: - Follow
 
-    private func scrollAnimation(for index: Int) -> Animation? {
-        let base = Animation.timingCurve(0.22, 0.61, 0.36, 1, duration: 0.58)
-        guard let activeIndex, scrollDirection != 0 else { return base }
-        let range = 4
-        let clamped = max(-range, min(range, index - activeIndex))
-        let delay = Double(range + scrollDirection * clamped) * 0.045
-        return base.delay(max(0, delay))
-    }
-
-    private func updateActiveIndex(_ time: Double) {
+    private func updateActiveIndex(_ time: Double, proxy: ScrollViewProxy) {
         guard let next = index(at: time) else { return }
         let previous = activeIndex
         guard previous != next else { return }
         activeIndex = next
-        if let previous {
-            scrollDirection = next > previous ? 1 : -1
+
+        guard !scrollState.isUserScrolling, Date() >= scrollState.resumeAt else { return }
+        withAnimation(.easeInOut(duration: 0.45)) {
+            proxy.scrollTo(next, anchor: anchor)
         }
-        guard !isDragging, Date() >= resumeFollowAt else { return }
-        recenter(animated: true)
     }
 
-    private func recenter(animated: Bool) {
-        guard let index = activeIndex,
-              tops.indices.contains(index),
-              heights.indices.contains(index),
-              viewportHeight > 0 else { return }
-        let target = viewportHeight * anchorFraction - (tops[index] + heights[index] / 2)
-        setOffset(target, animated: animated)
-    }
-
-    private func setOffset(_ target: CGFloat, animated: Bool) {
-        if animated {
-            withAnimation(.timingCurve(0.22, 0.61, 0.36, 1, duration: 0.5)) {
-                offset = target
-            }
-        } else {
-            var transaction = Transaction()
-            transaction.disablesAnimations = true
-            withTransaction(transaction) {
-                offset = target
+    private func scheduleResume(proxy: ScrollViewProxy) {
+        let token = UUID()
+        scrollState.token = token
+        scrollState.resumeAt = Date().addingTimeInterval(3.0)
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            guard !Task.isCancelled, scrollState.token == token, !scrollState.isUserScrolling else { return }
+            guard let index = activeIndex else { return }
+            withAnimation(.easeInOut(duration: 0.45)) {
+                proxy.scrollTo(index, anchor: anchor)
             }
         }
     }
+}
 
-    // MARK: - Layout
-
-    private func rebuild(width: CGFloat, height: CGFloat, animated: Bool) {
-        guard width > 1, height > 1, !lyrics.lines.isEmpty else { return }
-        let textWidth = max(1, width - horizontalPadding * 2)
-        var newHeights: [CGFloat] = []
-        newHeights.reserveCapacity(lyrics.lines.count)
-        for line in lyrics.lines {
-            newHeights.append(Self.lineHeight(for: line, width: textWidth, fontSize: activeSize))
-        }
-        var newTops: [CGFloat] = []
-        newTops.reserveCapacity(newHeights.count)
-        var running: CGFloat = 0
-        for value in newHeights {
-            newTops.append(running)
-            running += value
-        }
-
-        heights = newHeights
-        tops = newTops
-        contentHeight = running
-        viewportWidth = width
-        viewportHeight = height
-        if activeIndex == nil {
-            activeIndex = index(at: clock.time) ?? 0
-        }
-        guard let index = activeIndex, newTops.indices.contains(index) else { return }
-        let target = height * anchorFraction - (newTops[index] + newHeights[index] / 2)
-        setOffset(target, animated: animated)
-    }
-
-    private static func lineHeight(for line: LyricLine, width: CGFloat, fontSize: CGFloat) -> CGFloat {
-        let font = UIFont.systemFont(ofSize: fontSize, weight: .bold)
-        let paragraph = NSMutableParagraphStyle()
-        paragraph.lineSpacing = 5
-        paragraph.lineBreakMode = .byWordWrapping
-        let attributes: [NSAttributedString.Key: Any] = [
-            .font: font,
-            .paragraphStyle: paragraph
-        ]
-        let rect = (line.text as NSString).boundingRect(
-            with: CGSize(width: width, height: .greatestFiniteMagnitude),
-            options: [.usesLineFragmentOrigin, .usesFontLeading],
-            attributes: attributes,
-            context: nil
-        )
-        return max(fontSize * 1.3, ceil(rect.height)) + 26
-    }
-
-    // MARK: - Manual scroll
-
-    private var dragGesture: some Gesture {
-        DragGesture(minimumDistance: 10)
-            .onChanged { value in
-                if !isDragging {
-                    isDragging = true
-                    dragBase = offset
-                }
-                offset = clamp(dragBase + value.translation.height)
-            }
-            .onEnded { _ in
-                isDragging = false
-                resumeFollowAt = Date().addingTimeInterval(3.5)
-                let token = UUID()
-                resumeToken = token
-                Task { @MainActor in
-                    try? await Task.sleep(nanoseconds: 3_500_000_000)
-                    guard !Task.isCancelled, resumeToken == token, !isDragging else { return }
-                    recenter(animated: true)
-                }
-            }
-    }
-
-    private func clamp(_ value: CGFloat) -> CGFloat {
-        let lower = min(0, viewportHeight - contentHeight - viewportHeight * 0.35)
-        let upper = max(0, viewportHeight * 0.65)
-        return min(upper, max(lower, value))
-    }
+/// Touch/resume bookkeeping. No `@Published` properties: a 60 Hz drag must
+/// never invalidate the lyric view.
+private final class LyricScrollState: ObservableObject {
+    var lastInteraction = Date.distantPast
+    var resumeAt = Date.distantPast
+    var token = UUID()
+    var isUserScrolling = false
 }
 
 // MARK: - Press feedback
@@ -307,10 +196,8 @@ private struct LyricPressButtonStyle: ButtonStyle {
 
 // MARK: - Karaoke line
 
-/// Character-by-character fill measured in real glyph widths. The old version
-/// divided the line width by `text.count`, which drifted badly on lines that
-/// mix CJK and Latin characters. The mask also carries a short feathered edge
-/// so the wipe reads as light rather than a hard rectangle.
+/// Character-by-character fill measured in real glyph widths, with a short
+/// feathered edge. Only the one active row runs this view at 10 Hz.
 private struct KaraokeLyricLine: View {
     let line: LyricLine
     @ObservedObject var clock: LyricsClock
