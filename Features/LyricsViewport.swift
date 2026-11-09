@@ -269,7 +269,6 @@ struct LyricsViewportView: View {
                     dragBase = offset
                 }
                 offset = clamp(dragBase + value.translation.height)
-                resumeFollowAt = Date().addingTimeInterval(3.5)
             }
             .onEnded { _ in
                 isDragging = false

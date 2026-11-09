@@ -37,6 +37,8 @@
     </dict>
     <key>NSLocalNetworkUsageDescription</key>
     <string>用于连接局域网内的洛雪数据同步服务。</string>
+    <key>NSPhotoLibraryUsageDescription</key>
+    <string>用于选择一张照片作为 App 的自定义背景。</string>
     <key>UILaunchScreen</key>
     <dict>
         <key>UIColorName</key>

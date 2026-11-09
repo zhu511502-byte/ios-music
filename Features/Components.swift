@@ -116,7 +116,7 @@ struct FlowingGlowView: View {
     var intensity: Double = 0.55
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 24.0)) { context in
+        TimelineView(.periodic(from: .now, by: 0.12)) { context in
             let t = context.date.timeIntervalSinceReferenceDate
             GeometryReader { geometry in
                 let w = geometry.size.width
@@ -161,7 +161,6 @@ struct FlowingGlowView: View {
                         .offset(x: CGFloat(sin(t * 0.11 + 1.7)) * w * 0.26,
                                 y: CGFloat(cos(t * 0.15 + 0.8)) * h * 0.20)
                 }
-                .blur(radius: 52)
                 .blendMode(.screen)
                 .opacity(intensity)
             }

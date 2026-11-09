@@ -14,7 +14,7 @@ struct LyricsView: View {
     @State private var loadedTrackID: String?
     @State private var isImmersive = false
     @State private var showAddToPlaylist = false
-    @State private var lastInteraction = Date()
+    @StateObject private var interaction = LyricsInteractionState()
     @State private var isLandscape = false
 
     var body: some View {
@@ -38,14 +38,14 @@ struct LyricsView: View {
         .animation(.easeInOut(duration: 0.3), value: isImmersive)
         .simultaneousGesture(
             TapGesture().onEnded {
-                lastInteraction = Date()
+                interaction.last = Date()
                 if isImmersive {
                     withAnimation(.easeInOut(duration: 0.28)) { isImmersive = false }
                 }
             }
         )
         .simultaneousGesture(
-            DragGesture(minimumDistance: 8).onChanged { _ in lastInteraction = Date() }
+            DragGesture(minimumDistance: 8).onChanged { _ in interaction.last = Date() }
         )
         .task(id: player.currentTrack?.id) {
             await load()
@@ -54,7 +54,7 @@ struct LyricsView: View {
             await autoImmersiveLoop()
         }
         .onChange(of: isImmersive) { value in
-            if !value { lastInteraction = Date() }
+            if !value { interaction.last = Date() }
         }
         .sheet(isPresented: $showAddToPlaylist) {
             if let track = player.currentTrack {
@@ -457,12 +457,12 @@ struct LyricsView: View {
     // MARK: - Auto immersive
 
     private func autoImmersiveLoop() async {
-        lastInteraction = Date()
+        interaction.last = Date()
         while !Task.isCancelled {
             try? await Task.sleep(nanoseconds: 1_000_000_000)
             guard !Task.isCancelled else { return }
             guard !isImmersive, !isLandscape, player.isPlaying else { continue }
-            if Date().timeIntervalSince(lastInteraction) >= 10 {
+            if Date().timeIntervalSince(interaction.last) >= 10 {
                 withAnimation(.easeInOut(duration: 0.35)) { isImmersive = true }
             }
         }
@@ -530,4 +530,11 @@ private struct PlainLyricsView: View {
             .padding(.bottom, 190)
         }
     }
+}
+
+
+/// Reference box for the last touch time. Deliberately has no `@Published`
+/// storage: updating it from a 60 Hz drag must not rebuild the lyric screen.
+private final class LyricsInteractionState: ObservableObject {
+    var last = Date()
 }
