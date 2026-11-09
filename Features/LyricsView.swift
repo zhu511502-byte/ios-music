@@ -683,24 +683,25 @@ private struct KaraokeLineView: View {
     }
 
     var body: some View {
-        Canvas { context, size in
-            let text = Text(line.text)
-                .font(.system(size: fontSize, weight: .bold))
-                .lineLimit(1)
-            let resolved = context.resolve(text)
-            let measured = resolved.measure(in: size)
+        ZStack(alignment: .leading) {
+            Text(line.text)
+                .foregroundStyle(.white.opacity(0.30))
 
-            var dimmed = context
-            dimmed.opacity = 0.30
-            dimmed.draw(resolved, at: .zero, anchor: .topLeading)
-
-            var highlighted = context
-            let width = max(0, measured.width * fillProgress)
-            highlighted.clip(to: Path(CGRect(x: 0, y: 0, width: width, height: max(size.height, measured.height))))
-            highlighted.draw(resolved, at: .zero, anchor: .topLeading)
+            Text(line.text)
+                .foregroundStyle(.white)
+                .mask(alignment: .leading) {
+                    GeometryReader { geometry in
+                        Rectangle()
+                            .fill(.white)
+                            .frame(width: max(0, geometry.size.width * fillProgress))
+                            .animation(.linear(duration: 0.12), value: fillProgress)
+                    }
+                }
         }
+        .font(.system(size: fontSize, weight: .bold))
+        .lineLimit(1)
+        .minimumScaleFactor(0.7)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .frame(height: fontSize * 1.55)
         .accessibilityLabel(line.text)
     }
 }
