@@ -2,22 +2,6 @@ import Foundation
 import Combine
 import UIKit
 
-/// App-wide backdrop style. "Dynamic cover" uses the current track's album
-/// artwork as a blurred background across the whole app.
-enum BackgroundStyle: String, CaseIterable, Identifiable {
-    case solid
-    case artwork
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .solid: return "纯色"
-        case .artwork: return "动态封面"
-        }
-    }
-}
-
 @MainActor
 final class SettingsStore: ObservableObject {
     @Published var serverURL: String {
@@ -35,17 +19,21 @@ final class SettingsStore: ObservableObject {
     @Published var showExplicitContent: Bool {
         didSet { defaults.set(showExplicitContent, forKey: Keys.showExplicitContent) }
     }
-    @Published var backgroundStyle: BackgroundStyle {
-        didSet { defaults.set(backgroundStyle.rawValue, forKey: Keys.backgroundStyle) }
-    }
-    /// Blur radius for the dynamic artwork backdrop, 0...80.
+
+    /// Custom background chosen from the photo library.
+    @Published private(set) var backgroundImage: UIImage? = nil
+
+    /// Custom background appearance.
     @Published var backgroundBlur: Double {
         didSet { defaults.set(backgroundBlur, forKey: Keys.backgroundBlur) }
     }
-    /// Dark overlay strength for the dynamic backdrop, 0...0.9.
     @Published var backgroundDim: Double {
         didSet { defaults.set(backgroundDim, forKey: Keys.backgroundDim) }
     }
+    @Published var backgroundOpacity: Double {
+        didSet { defaults.set(backgroundOpacity, forKey: Keys.backgroundOpacity) }
+    }
+
     /// Character-by-character highlight on the active lyric line.
     @Published var karaokeLyrics: Bool {
         didSet { defaults.set(karaokeLyrics, forKey: Keys.karaokeLyrics) }
@@ -54,7 +42,6 @@ final class SettingsStore: ObservableObject {
     @Published var autoSync: Bool {
         didSet {
             defaults.set(autoSync, forKey: Keys.autoSync)
-            // Settings must survive an immediate app termination after a toggle.
             defaults.synchronize()
         }
     }
@@ -76,11 +63,15 @@ final class SettingsStore: ObservableObject {
         static let selectedSourceID = "settings.selectedSourceID"
         static let allowCellular = "settings.allowCellular"
         static let showExplicitContent = "settings.showExplicitContent"
-        static let backgroundStyle = "settings.backgroundStyle"
         static let backgroundBlur = "settings.backgroundBlur"
         static let backgroundDim = "settings.backgroundDim"
+        static let backgroundOpacity = "settings.backgroundOpacity"
         static let karaokeLyrics = "settings.karaokeLyrics"
         static let autoSync = "settings.autoSync"
+    }
+
+    private static var backgroundImageFile: URL {
+        AppPaths.root.appendingPathComponent("custom-background.jpg")
     }
 
     init() {
@@ -89,11 +80,15 @@ final class SettingsStore: ObservableObject {
         selectedSourceID = defaults.string(forKey: Keys.selectedSourceID)
         if let value = defaults.object(forKey: Keys.allowCellular) as? Bool { allowCellular = value } else { allowCellular = true }
         if let value = defaults.object(forKey: Keys.showExplicitContent) as? Bool { showExplicitContent = value } else { showExplicitContent = false }
-        backgroundStyle = BackgroundStyle(rawValue: defaults.string(forKey: Keys.backgroundStyle) ?? "") ?? .artwork
-        let blur = defaults.double(forKey: Keys.backgroundBlur)
-        backgroundBlur = (0...80).contains(blur) ? blur : 60
-        let dim = defaults.double(forKey: Keys.backgroundDim)
-        backgroundDim = (0...0.9).contains(dim) ? dim : 0.45
+
+        let blur = defaults.object(forKey: Keys.backgroundBlur) != nil ? defaults.double(forKey: Keys.backgroundBlur) : 26
+        backgroundBlur = (0...60).contains(blur) ? blur : 26
+        let dim = defaults.object(forKey: Keys.backgroundDim) != nil ? defaults.double(forKey: Keys.backgroundDim) : 0.35
+        backgroundDim = (0...0.9).contains(dim) ? dim : 0.35
+        let opacity = defaults.object(forKey: Keys.backgroundOpacity) != nil ? defaults.double(forKey: Keys.backgroundOpacity) : 0.9
+        backgroundOpacity = (0.2...1).contains(opacity) ? opacity : 0.9
+        backgroundImage = UIImage(contentsOfFile: Self.backgroundImageFile.path)
+
         if defaults.object(forKey: Keys.karaokeLyrics) != nil {
             karaokeLyrics = defaults.bool(forKey: Keys.karaokeLyrics)
         } else {
@@ -107,6 +102,39 @@ final class SettingsStore: ObservableObject {
         if let data = KeychainStore.get(account: "settings.authCode"),
            let code = String(data: data, encoding: .utf8) {
             authCode = code
+        }
+    }
+
+    var hasCustomBackground: Bool { backgroundImage != nil }
+
+    func setBackgroundImage(_ image: UIImage?) {
+        guard let image else {
+            backgroundImage = nil
+            try? FileManager.default.removeItem(at: Self.backgroundImageFile)
+            return
+        }
+        let resized = Self.resized(image, maxDimension: 2400)
+        guard let data = resized.jpegData(compressionQuality: 0.88) else { return }
+        do {
+            try data.write(to: Self.backgroundImageFile, options: .atomic)
+            backgroundImage = resized
+        } catch {
+            // Keep the old image if writing fails.
+        }
+    }
+
+    func removeBackgroundImage() {
+        setBackgroundImage(nil)
+    }
+
+    private static func resized(_ image: UIImage, maxDimension: CGFloat) -> UIImage {
+        let size = image.size
+        let longest = max(size.width, size.height)
+        guard longest > maxDimension else { return image }
+        let scale = maxDimension / longest
+        let target = CGSize(width: size.width * scale, height: size.height * scale)
+        return UIGraphicsImageRenderer(size: target).image { _ in
+            image.draw(in: CGRect(origin: .zero, size: target))
         }
     }
 

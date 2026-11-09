@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 enum AppTheme {
     static let background = Color(red: 0.055, green: 0.055, blue: 0.075)
@@ -108,41 +109,93 @@ struct EmptyStateView: View {
     }
 }
 
-/// App-wide backdrop: solid dark color, or a blurred version of the current
-/// album artwork when "动态封面" is selected. Reads blur/dim strength from
-/// SettingsStore so the effect is configurable in the appearance settings.
+/// Slow-moving specular highlights layered over the app background. The
+/// motion is intentionally subtle — it should feel like light moving behind
+/// frosted glass, not a screensaver.
+struct FlowingGlowView: View {
+    var intensity: Double = 0.55
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 24.0)) { context in
+            let t = context.date.timeIntervalSinceReferenceDate
+            GeometryReader { geometry in
+                let w = geometry.size.width
+                let h = geometry.size.height
+                ZStack {
+                    Circle()
+                        .fill(
+                            RadialGradient(
+                                colors: [Color.white.opacity(0.19), .clear],
+                                center: .center,
+                                startRadius: 0,
+                                endRadius: w * 0.46
+                            )
+                        )
+                        .frame(width: w * 0.92)
+                        .offset(x: CGFloat(sin(t * 0.21)) * w * 0.22,
+                                y: CGFloat(cos(t * 0.17)) * h * 0.14)
+
+                    Circle()
+                        .fill(
+                            RadialGradient(
+                                colors: [Color(red: 1.0, green: 0.42, blue: 0.38).opacity(0.16), .clear],
+                                center: .center,
+                                startRadius: 0,
+                                endRadius: w * 0.38
+                            )
+                        )
+                        .frame(width: w * 0.74)
+                        .offset(x: CGFloat(cos(t * 0.13)) * w * 0.30,
+                                y: CGFloat(sin(t * 0.19)) * h * 0.22)
+
+                    Circle()
+                        .fill(
+                            RadialGradient(
+                                colors: [Color(red: 0.45, green: 0.55, blue: 1.0).opacity(0.10), .clear],
+                                center: .center,
+                                startRadius: 0,
+                                endRadius: w * 0.34
+                            )
+                        )
+                        .frame(width: w * 0.66)
+                        .offset(x: CGFloat(sin(t * 0.11 + 1.7)) * w * 0.26,
+                                y: CGFloat(cos(t * 0.15 + 0.8)) * h * 0.20)
+                }
+                .blur(radius: 52)
+                .blendMode(.screen)
+                .opacity(intensity)
+            }
+        }
+        .allowsHitTesting(false)
+    }
+}
+
+/// App-wide backdrop: the user's custom photo when set, otherwise a solid
+/// dark color, with slow specular highlights on top.
 struct AppBackgroundView: View {
     @EnvironmentObject private var settings: SettingsStore
-    @EnvironmentObject private var player: PlaybackCoordinator
 
     var body: some View {
         ZStack {
             Color(red: 0.03, green: 0.03, blue: 0.05)
 
-            if settings.backgroundStyle == .artwork,
-               let url = player.currentTrack?.picURL {
+            if let image = settings.backgroundImage {
                 GeometryReader { geometry in
-                    AsyncImage(url: url) { phase in
-                        if let image = phase.image {
-                            image.resizable()
-                                .scaledToFill()
-                                .frame(width: geometry.size.width, height: geometry.size.height)
-                                .clipped()
-                                .blur(radius: max(settings.backgroundBlur, 1))
-                                .scaleEffect(1.1)
-                                .opacity(0.5)
-                        }
-                    }
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: geometry.size.width, height: geometry.size.height)
+                        .clipped()
+                        .blur(radius: max(settings.backgroundBlur, 0.5))
+                        .opacity(settings.backgroundOpacity)
                 }
                 .ignoresSafeArea()
-                .transition(.opacity)
-                .id(player.currentTrack?.id ?? "")
             }
 
-            Color.black.opacity(settings.backgroundStyle == .artwork ? settings.backgroundDim : 0)
+            Color.black.opacity(settings.backgroundDim)
+            FlowingGlowView(intensity: 0.5)
         }
         .ignoresSafeArea()
-        .animation(.easeInOut(duration: 0.45), value: player.currentTrack?.id)
     }
 }
 

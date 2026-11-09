@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import UIKit
 
 struct LyricsView: View {
     @EnvironmentObject private var player: PlaybackCoordinator
@@ -13,6 +14,7 @@ struct LyricsView: View {
     @State private var loadedTrackID: String?
     @State private var isImmersive = false
     @State private var showAddToPlaylist = false
+    @State private var lastInteraction = Date()
 
     var body: some View {
         GeometryReader { geometry in
@@ -27,14 +29,28 @@ struct LyricsView: View {
                     portraitLayout(size: geometry.size)
                 }
 
-                if isImmersive {
-                    immersiveExitButton
-                }
             }
         }
-        .animation(.easeInOut(duration: 0.25), value: isImmersive)
+        .animation(.easeInOut(duration: 0.3), value: isImmersive)
+        .simultaneousGesture(
+            TapGesture().onEnded {
+                lastInteraction = Date()
+                if isImmersive {
+                    withAnimation(.easeInOut(duration: 0.28)) { isImmersive = false }
+                }
+            }
+        )
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 8).onChanged { _ in lastInteraction = Date() }
+        )
         .task(id: player.currentTrack?.id) {
             await load()
+        }
+        .task {
+            await autoImmersiveLoop()
+        }
+        .onChange(of: isImmersive) { value in
+            if !value { lastInteraction = Date() }
         }
         .sheet(isPresented: $showAddToPlaylist) {
             if let track = player.currentTrack {
@@ -54,6 +70,7 @@ struct LyricsView: View {
             }
 
             lyricsContent(isLandscape: false)
+                .id("lyrics-content-portrait")
 
             if !isImmersive {
                 portraitFooter
@@ -71,6 +88,7 @@ struct LyricsView: View {
             }
 
             lyricsContent(isLandscape: true)
+                .id("lyrics-content-landscape")
         }
     }
 
@@ -153,15 +171,10 @@ struct LyricsView: View {
 
             Spacer(minLength: 10)
 
-            LyricsProgressRow(clock: player.clock, duration: player.duration) { value in
-                player.seek(to: value)
-            }
-
             QualityMenuView()
-                .padding(.top, -1)
 
             transportRow
-                .padding(.top, 8)
+                .padding(.top, 10)
 
             volumeRow
                 .padding(.top, 8)
@@ -176,12 +189,7 @@ struct LyricsView: View {
 
     private var portraitFooter: some View {
         VStack(spacing: 7) {
-            LyricsProgressRow(clock: player.clock, duration: player.duration) { value in
-                player.seek(to: value)
-            }
-
             QualityMenuView()
-                .padding(.top, -1)
 
             transportRow
 
@@ -344,33 +352,6 @@ struct LyricsView: View {
 
     // MARK: - Immersive
 
-    private var immersiveExitButton: some View {
-        VStack {
-            HStack {
-                Spacer()
-                Button {
-                    withAnimation(.easeInOut(duration: 0.25)) { isImmersive = false }
-                } label: {
-                    HStack(spacing: 5) {
-                        Image(systemName: "chevron.down")
-                        Text("退出全屏")
-                    }
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(.ultraThinMaterial, in: Capsule())
-                    .overlay(
-                        Capsule().strokeBorder(.white.opacity(0.25), lineWidth: 0.8)
-                    )
-                }
-            }
-            Spacer()
-        }
-        .padding(.top, 8)
-        .padding(.trailing, 18)
-    }
-
     // MARK: - Lyrics content
 
     @ViewBuilder
@@ -447,7 +428,19 @@ struct LyricsView: View {
         ZStack {
             Color.black
 
-            if let url = player.currentTrack?.picURL {
+            if let custom = settings.backgroundImage {
+                GeometryReader { geometry in
+                    Image(uiImage: custom)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: geometry.size.width, height: geometry.size.height)
+                        .clipped()
+                        .blur(radius: max(settings.backgroundBlur, 0.5))
+                        .scaleEffect(1.08)
+                        .opacity(settings.backgroundOpacity)
+                }
+                .ignoresSafeArea()
+            } else if let url = player.currentTrack?.picURL {
                 GeometryReader { geometry in
                     AsyncImage(url: url) { phase in
                         if let image = phase.image {
@@ -464,6 +457,8 @@ struct LyricsView: View {
                 .ignoresSafeArea()
             }
 
+            FlowingGlowView(intensity: 0.5)
+
             LinearGradient(
                 stops: [
                     .init(color: .black.opacity(0.12), location: 0),
@@ -477,6 +472,20 @@ struct LyricsView: View {
             .ignoresSafeArea()
         }
         .ignoresSafeArea()
+    }
+
+    // MARK: - Auto immersive
+
+    private func autoImmersiveLoop() async {
+        lastInteraction = Date()
+        while !Task.isCancelled {
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            guard !Task.isCancelled else { return }
+            guard !isImmersive, player.isPlaying else { continue }
+            if Date().timeIntervalSince(lastInteraction) >= 10 {
+                withAnimation(.easeInOut(duration: 0.35)) { isImmersive = true }
+            }
+        }
     }
 
     // MARK: - Load
@@ -589,6 +598,16 @@ private struct SyncedLyricsView: View {
                         proxy.scrollTo(index, anchor: UnitPoint(x: 0.5, y: 0.42))
                     }
                 }
+                .onChange(of: isImmersive) { _ in
+                    // Re-center after the header/footer disappear so the
+                    // highlighted line doesn't jump to another part of the screen.
+                    guard let index = activeIndex ?? currentIndex else { return }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+                        withAnimation(.easeInOut(duration: 0.35)) {
+                            proxy.scrollTo(index, anchor: UnitPoint(x: 0.5, y: 0.42))
+                        }
+                    }
+                }
             }
         }
     }
@@ -636,39 +655,52 @@ private struct KaraokeLineView: View {
     @ObservedObject var clock: LyricsClock
     let fontSize: CGFloat
 
-    private var sungCount: Int {
-        guard let start = line.time, clock.time >= start - 0.05 else { return 0 }
-        var count = 0
-        for offset in line.wordTimes where clock.time + 0.03 >= offset {
-            count += 1
+    /// Continuous 0...1 fill across the line, interpolated inside the current
+    /// character. Rendering a clipped copy of the text makes the highlight
+    /// glide instead of stepping character-by-character.
+    private var fillProgress: Double {
+        guard let start = line.time, clock.time >= start else { return 0 }
+        let times = line.wordTimes
+        guard !times.isEmpty else { return 1 }
+
+        var filled = 0.0
+        for index in times.indices {
+            let startTime = times[index]
+            let endTime = index + 1 < times.count
+                ? times[index + 1]
+                : (line.endTime ?? startTime + 0.35)
+            if clock.time >= endTime {
+                filled += 1
+            } else if clock.time > startTime {
+                let span = max(endTime - startTime, 0.06)
+                filled += min(max((clock.time - startTime) / span, 0), 1)
+                break
+            } else {
+                break
+            }
         }
-        return min(count, line.text.count)
+        return min(filled / Double(max(line.text.count, 1)), 1)
     }
 
     var body: some View {
-        Text(styledText)
-            .font(.system(size: fontSize, weight: .bold))
-            .lineSpacing(5)
-            .multilineTextAlignment(.leading)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .animation(.easeInOut(duration: 0.1), value: sungCount)
-    }
+        Canvas { context, size in
+            let base = Text(line.text)
+                .font(.system(size: fontSize, weight: .bold))
+                .lineLimit(1)
+            let dim = context.resolve(base.foregroundColor(.white.opacity(0.30)))
+            let bright = context.resolve(base.foregroundColor(.white))
+            let measured = dim.measure(in: size)
 
-    private var styledText: AttributedString {
-        let characters = Array(line.text)
-        var result = AttributedString()
-        for (index, character) in characters.enumerated() {
-            var piece = AttributedString(String(character))
-            if index < sungCount {
-                piece.foregroundColor = .white
-            } else if index == sungCount {
-                piece.foregroundColor = Color.white.opacity(0.72)
-            } else {
-                piece.foregroundColor = Color.white.opacity(0.32)
-            }
-            result.append(piece)
+            context.draw(dim, at: .zero, anchor: .topLeading)
+
+            var highlighted = context
+            let width = max(0, measured.width * fillProgress)
+            highlighted.clip(to: Path(CGRect(x: 0, y: 0, width: width, height: max(size.height, measured.height))))
+            highlighted.draw(bright, at: .zero, anchor: .topLeading)
         }
-        return result
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(height: fontSize * 1.55)
+        .accessibilityLabel(line.text)
     }
 }
 
@@ -693,70 +725,5 @@ private struct PlainLyricsView: View {
             .padding(.top, 30)
             .padding(.bottom, 40)
         }
-    }
-}
-
-// MARK: - Progress + quality row
-
-private struct LyricsProgressRow: View {
-    @ObservedObject var clock: PlaybackClock
-    let duration: Double
-    let onSeek: (Double) -> Void
-
-    @State private var dragValue: Double = 0
-    @State private var isDragging = false
-
-    private var displayedTime: Double {
-        min(max(isDragging ? dragValue : clock.time, 0), max(duration, 0))
-    }
-
-    private var progress: Double {
-        guard duration > 0 else { return 0 }
-        return min(max(displayedTime / duration, 0), 1)
-    }
-
-    var body: some View {
-        VStack(spacing: 5) {
-            GeometryReader { geometry in
-                ZStack(alignment: .leading) {
-                    Capsule()
-                        .fill(.white.opacity(0.2))
-                        .frame(height: 3)
-                    Capsule()
-                        .fill(.white.opacity(0.88))
-                        .frame(width: max(0, CGFloat(progress) * geometry.size.width), height: 3)
-                }
-                .frame(maxHeight: .infinity, alignment: .center)
-                .contentShape(Rectangle())
-                .gesture(
-                    DragGesture(minimumDistance: 0)
-                        .onChanged { value in
-                            guard duration > 0 else { return }
-                            isDragging = true
-                            let fraction = min(max(value.location.x / max(geometry.size.width, 1), 0), 1)
-                            dragValue = Double(fraction) * duration
-                        }
-                        .onEnded { _ in
-                            isDragging = false
-                            onSeek(dragValue)
-                        }
-                )
-            }
-            .frame(height: 13)
-
-            HStack {
-                Text(timeText(displayedTime))
-                Spacer()
-                Text("-" + timeText(max(0, duration - displayedTime)))
-            }
-            .font(.caption2.monospacedDigit())
-            .foregroundStyle(.white.opacity(0.48))
-        }
-    }
-
-    private func timeText(_ seconds: Double) -> String {
-        guard seconds.isFinite, seconds >= 0 else { return "0:00" }
-        let total = Int(seconds)
-        return String(format: "%d:%02d", total / 60, total % 60)
     }
 }

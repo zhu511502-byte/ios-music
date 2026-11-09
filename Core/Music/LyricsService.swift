@@ -65,12 +65,21 @@ actor LyricsService {
         } else {
             var yrcLyrics: Lyrics?
             if track.source == "wy" {
-                yrcLyrics = try await neteaseYRCLyrics(track)
+                // Any yrc failure must fall back to the normal LRC lyric
+                // endpoint instead of surfacing a parser error.
+                yrcLyrics = try? await neteaseYRCLyrics(track)
             }
             if let yrcLyrics {
                 parsed = yrcLyrics
             } else {
-                parsed = LyricsParser.parse(try await platformLyrics(track))
+                do {
+                    parsed = LyricsParser.parse(try await platformLyrics(track))
+                } catch let error as MusicAPIError {
+                    // A non-JSON/HTML response means "no usable lyric" rather
+                    // than a scary "格式不正确" error.
+                    if case .invalidResponse = error { throw LyricsError.notFound }
+                    throw error
+                }
             }
         }
 
@@ -148,6 +157,7 @@ actor LyricsService {
             guard !id.isEmpty else { throw LyricsError.notFound }
             let url = try makeURL("https://m.kuwo.cn/newh5/singles/songinfoandlrc", [("musicId", id)])
             let body = try await fetchJSON(url)
+            if let raw = body["lyric"] as? String, raw.contains("[") { return raw }
             let lines = MusicParse.objects(MusicParse.dictionary(body["data"])["lrclist"])
             return lines.compactMap { line in
                 let text = MusicParse.htmlDecode(MusicParse.string(line["lineLyric"]))
@@ -242,7 +252,16 @@ actor LyricsService {
         if let start = text.firstIndex(of: "("), let end = text.lastIndex(of: ")"), start < end {
             text = String(text[text.index(after: start)..<end])
         }
-        return try MusicParse.decode(Data(text.utf8))
+        do {
+            return try MusicParse.decode(Data(text.utf8))
+        } catch {
+            // Some legacy endpoints return a plain LRC document. Treat it as
+            // a lyric payload; the caller can parse it directly.
+            if text.contains("[") {
+                return ["lyric": text]
+            }
+            throw LyricsError.notFound
+        }
     }
 
     private func fetchData(_ url: URL, headers: [String: String] = [:]) async throws -> Data {

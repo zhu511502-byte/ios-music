@@ -4,6 +4,7 @@ import UIKit
 struct PlayerView: View {
     @EnvironmentObject private var player: PlaybackCoordinator
     @EnvironmentObject private var library: LibraryStore
+    @EnvironmentObject private var settings: SettingsStore
     @Environment(\.dismiss) private var dismiss
 
     @State private var showLyrics = false
@@ -97,7 +98,18 @@ struct PlayerView: View {
     private var background: some View {
         ZStack {
             Color.black
-            if let url = player.currentTrack?.picURL {
+            if let custom = settings.backgroundImage {
+                GeometryReader { geometry in
+                    Image(uiImage: custom)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: geometry.size.width, height: geometry.size.height)
+                        .clipped()
+                        .blur(radius: max(settings.backgroundBlur, 0.5))
+                        .opacity(settings.backgroundOpacity)
+                }
+                .ignoresSafeArea()
+            } else if let url = player.currentTrack?.picURL {
                 GeometryReader { geometry in
                     AsyncImage(url: url) { phase in
                         if let image = phase.image {
@@ -112,6 +124,8 @@ struct PlayerView: View {
                 }
                 .ignoresSafeArea()
             }
+            FlowingGlowView(intensity: 0.35)
+
             LinearGradient(
                 colors: [.black.opacity(0.12), .black.opacity(0.42), .black],
                 startPoint: .top,

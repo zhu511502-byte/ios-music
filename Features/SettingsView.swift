@@ -1,5 +1,7 @@
 import Foundation
 import SwiftUI
+import UIKit
+import PhotosUI
 import UniformTypeIdentifiers
 
 struct SettingsView: View {
@@ -16,6 +18,7 @@ struct SettingsView: View {
     @State private var isWorking = false
     @State private var message: String?
     @State private var showMessage = false
+    @State private var selectedPhoto: PhotosPickerItem?
 
     private let jsType = UTType(filenameExtension: "js") ?? .plainText
 
@@ -51,6 +54,16 @@ struct SettingsView: View {
                     sync.resolveMode(mode)
                 }
                 .interactiveDismissDisabled()
+            }
+            .onChange(of: selectedPhoto) { item in
+                guard let item else { return }
+                Task {
+                    if let data = try? await item.loadTransferable(type: Data.self),
+                       let image = UIImage(data: data) {
+                        await MainActor.run { settings.setBackgroundImage(image) }
+                    }
+                    await MainActor.run { selectedPhoto = nil }
+                }
             }
         }
     }
@@ -193,12 +206,18 @@ struct SettingsView: View {
 
     private var appearanceSection: some View {
         Section {
-            Picker("背景", selection: $settings.backgroundStyle) {
-                ForEach(BackgroundStyle.allCases) { style in
-                    Text(style.title).tag(style)
-                }
+            PhotosPicker(selection: $selectedPhoto, matching: .images, photoLibrary: .shared()) {
+                Label(settings.hasCustomBackground ? "更换背景图" : "选择背景图", systemImage: "photo.on.rectangle.angled")
+                    .foregroundStyle(AppTheme.accent)
             }
-            if settings.backgroundStyle == .artwork {
+
+            if settings.hasCustomBackground {
+                Button(role: .destructive) {
+                    settings.removeBackgroundImage()
+                } label: {
+                    Label("移除背景图", systemImage: "trash")
+                }
+
                 VStack(alignment: .leading, spacing: 6) {
                     HStack {
                         Text("模糊强度")
@@ -207,9 +226,10 @@ struct SettingsView: View {
                             .font(.caption.monospacedDigit())
                             .foregroundStyle(AppTheme.secondaryText)
                     }
-                    Slider(value: $settings.backgroundBlur, in: 0...80, step: 1)
+                    Slider(value: $settings.backgroundBlur, in: 0...60, step: 1)
                         .tint(AppTheme.accent)
                 }
+
                 VStack(alignment: .leading, spacing: 6) {
                     HStack {
                         Text("压暗程度")
@@ -221,12 +241,25 @@ struct SettingsView: View {
                     Slider(value: $settings.backgroundDim, in: 0...0.9, step: 0.05)
                         .tint(AppTheme.accent)
                 }
-                Toggle("歌词逐字高亮", isOn: $settings.karaokeLyrics)
+
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Text("背景亮度")
+                        Spacer()
+                        Text(String(format: "%.0f%%", settings.backgroundOpacity * 100))
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(AppTheme.secondaryText)
+                    }
+                    Slider(value: $settings.backgroundOpacity, in: 0.2...1, step: 0.05)
+                        .tint(AppTheme.accent)
+                }
             }
+
+            Toggle("歌词逐字高亮", isOn: $settings.karaokeLyrics)
         } header: {
             SectionHeader(title: "外观")
         } footer: {
-            Text("「动态封面」用当前播放歌曲的专辑封面做全 App 模糊背景，随切歌平滑过渡。网易云歌曲自动使用官方逐字歌词（yrc）；关闭逐字高亮后，其他来源的歌词按整句显示。")
+            Text("选择一张照片作为全 App 背景，可调模糊、压暗和亮度。背景上会叠加缓慢流动的高光。网易云歌曲自动使用官方逐字歌词（yrc）；关闭逐字高亮后，其他来源的歌词按整句显示。")
         }
         .listRowBackground(AppTheme.card)
     }
