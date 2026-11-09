@@ -85,24 +85,13 @@ struct PlaylistDetailView: View {
     var body: some View {
         List {
             ForEach(tracks) { track in
-                Button {
-                    player.play(track: track, queue: tracks)
-                } label: {
-                    HStack(spacing: 12) {
-                        ArtworkView(url: track.picURL)
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(track.name).foregroundStyle(.white).lineLimit(1)
-                            Text(track.singer).font(.caption).foregroundStyle(AppTheme.secondaryText).lineLimit(1)
-                        }
-                        Spacer()
-                        if player.currentTrack?.id == track.id {
-                            Image(systemName: player.isPlaying ? "waveform" : "pause.fill")
-                                .foregroundStyle(AppTheme.accent)
-                        }
-                    }
-                    .padding(.vertical, 2)
-                }
-                .buttonStyle(.plain)
+                OnlineTrackRow(
+                    track: track,
+                    isCurrent: player.currentTrack?.id == track.id,
+                    isPlaying: player.isPlaying,
+                    onPlay: { player.play(track: track, queue: tracks) },
+                    onAdd: { trackToAdd = track }
+                )
                 .listRowBackground(AppTheme.card)
                 .swipeActions {
                     Button(role: .destructive) {
@@ -114,6 +103,11 @@ struct PlaylistDetailView: View {
                         trackToAdd = track
                     } label: {
                         Label("添加到其他歌单", systemImage: "text.badge.plus")
+                    }
+                    Button {
+                        player.play(track: track, queue: tracks)
+                    } label: {
+                        Label("播放", systemImage: "play.fill")
                     }
                 }
             }

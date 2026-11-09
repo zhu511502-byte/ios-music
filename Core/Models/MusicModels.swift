@@ -34,6 +34,18 @@ enum Quality: String, Codable, CaseIterable, Sendable, Identifiable, Hashable {
         case .wav: return 45
         }
     }
+
+    /// Human-friendly quality class shown under the playback progress bar.
+    var qualityTitle: String {
+        switch self {
+        case .flac, .flac24bit, .wav, .ape:
+            return "无损音质"
+        case .k320:
+            return "高品质"
+        case .k192, .k128:
+            return "标准音质"
+        }
+    }
 }
 
 struct QualityInfo: Codable, Hashable, Sendable {

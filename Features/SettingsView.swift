@@ -186,7 +186,7 @@ struct SettingsView: View {
         } header: {
             SectionHeader(title: "洛雪数据同步")
         } footer: {
-            Text("支持桌面版「服务端模式」和独立 lx-music-sync-server；连接码是服务端 users[].password，不是用户名。开启自动同步后，每次启动会用保存的地址和连接码直连并推送本机歌单。公网请使用 HTTPS/WSS。")
+            Text("支持桌面版「服务端模式」和独立 lx-music-sync-server；连接码是服务端 users[].password，不是用户名。开启自动同步后，每次启动会用保存的地址和连接码直连并推送本机歌单；首次选择的合并方式会被记住，之后不再弹窗。公网请使用 HTTPS/WSS。")
         }
         .listRowBackground(AppTheme.card)
     }

@@ -47,6 +47,46 @@ struct ArtworkView: View {
     }
 }
 
+/// Inline quality picker used by the player and lyrics screens. Changing the
+/// quality re-resolves the current track while keeping the playback position.
+struct QualityMenuView: View {
+    @EnvironmentObject private var settings: SettingsStore
+    @EnvironmentObject private var player: PlaybackCoordinator
+
+    private var qualities: [Quality] {
+        let available = player.currentTrack?.availableQualities ?? []
+        return available.isEmpty ? Quality.allCases : available
+    }
+
+    var body: some View {
+        Menu {
+            ForEach(qualities) { quality in
+                Button {
+                    guard quality != settings.preferredQuality else { return }
+                    settings.preferredQuality = quality
+                    player.reloadCurrentTrack(quality: quality)
+                } label: {
+                    HStack {
+                        Text("\(quality.qualityTitle) · \(quality.displayName)")
+                        if quality == settings.preferredQuality {
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "waveform")
+                Text("\(settings.preferredQuality.qualityTitle) \(settings.preferredQuality.displayName)")
+            }
+            .font(.caption2.weight(.medium))
+            .foregroundStyle(.white.opacity(0.62))
+        }
+        .disabled(player.currentTrack == nil)
+        .accessibilityLabel("音质选择")
+    }
+}
+
 struct EmptyStateView: View {
     let icon: String
     let title: String

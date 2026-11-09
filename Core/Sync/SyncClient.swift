@@ -66,13 +66,25 @@ final class SyncClient: ObservableObject {
 
     func resolveMode(_ mode: String) {
         modePrompt = nil
+        if mode != "cancel" {
+            // Remember the user's choice so automatic sync never asks again.
+            UserDefaults.standard.set(mode, forKey: syncModeKey)
+        }
         guard let continuation = modeContinuation else { return }
         modeContinuation = nil
         continuation.resume(returning: mode)
     }
 
+    private var syncModeKey: String {
+        "sync.mode.\(baseURL?.absoluteString ?? "default")"
+    }
+
     private func requestMode() async -> String {
-        await withCheckedContinuation { continuation in
+        // A saved choice is reused on every later launch (including auto-sync).
+        if let saved = UserDefaults.standard.string(forKey: syncModeKey), !saved.isEmpty {
+            return saved
+        }
+        return await withCheckedContinuation { continuation in
             modeContinuation = continuation
             modePrompt = SyncModePrompt(serverName: serverName.isEmpty ? "同步服务" : serverName)
         }

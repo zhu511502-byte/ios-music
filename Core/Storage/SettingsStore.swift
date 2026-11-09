@@ -52,7 +52,11 @@ final class SettingsStore: ObservableObject {
     }
     /// Connect to the LX sync server automatically on launch.
     @Published var autoSync: Bool {
-        didSet { defaults.set(autoSync, forKey: Keys.autoSync) }
+        didSet {
+            defaults.set(autoSync, forKey: Keys.autoSync)
+            // Settings must survive an immediate app termination after a toggle.
+            defaults.synchronize()
+        }
     }
     @Published var authCode: String = "" {
         didSet {

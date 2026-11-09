@@ -121,11 +121,13 @@ struct SearchView: View {
         } else {
             List {
                 ForEach(results) { track in
-                    OnlineTrackRow(track: track) {
-                        play(track)
-                    } onAdd: {
-                        trackToAdd = track
-                    }
+                    OnlineTrackRow(
+                        track: track,
+                        isCurrent: player.currentTrack?.id == track.id,
+                        isPlaying: player.isPlaying,
+                        onPlay: { play(track) },
+                        onAdd: { trackToAdd = track }
+                    )
                     .listRowBackground(Color.clear)
                     .listRowSeparatorTint(.white.opacity(0.08))
                 }

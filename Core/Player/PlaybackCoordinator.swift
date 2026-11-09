@@ -47,12 +47,19 @@ final class PlaybackClock: ObservableObject {
     @Published var time: Double = 0
 }
 
+/// High-frequency clock used only by karaoke lyrics. Keeping it separate from
+/// `PlaybackClock` means progress bars and lists still update at 2 Hz.
+final class LyricsClock: ObservableObject {
+    @Published var time: Double = 0
+}
+
 @MainActor
 final class PlaybackCoordinator: ObservableObject {
     @Published private(set) var currentTrack: MusicInfo?
     @Published private(set) var isPlaying = false
     private(set) var currentTime: Double = 0
     let clock = PlaybackClock()
+    let lyricsClock = LyricsClock()
     @Published private(set) var duration: Double = 0
     @Published private(set) var isBuffering = false
     @Published private(set) var queue: [MusicInfo] = []
@@ -62,6 +69,8 @@ final class PlaybackCoordinator: ObservableObject {
 
     private let player = AVPlayer()
     private var timeObserver: Any?
+    private var lyricTimeObserver: Any?
+    private var pendingSeek: Double?
     private var itemStatusObservation: NSKeyValueObservation?
     private var endObserver: NSObjectProtocol?
     private var currentIndex: Int?
@@ -100,6 +109,8 @@ final class PlaybackCoordinator: ObservableObject {
         currentTrack = track
         currentTime = 0
         clock.time = 0
+        lyricsClock.time = 0
+        pendingSeek = nil
         duration = 0
         errorMessage = nil
         isBuffering = true
@@ -222,10 +233,20 @@ final class PlaybackCoordinator: ObservableObject {
         play(track: queue[next], quality: qualityProvider())
     }
 
+    /// Re-resolve the current track at a new quality, preserving playback
+    /// position so the quality switch feels seamless.
+    func reloadCurrentTrack(quality: Quality) {
+        guard let track = currentTrack else { return }
+        let resume = currentTime
+        play(track: track, queue: queue, quality: quality)
+        if resume > 1 { pendingSeek = resume }
+    }
+
     func seek(to seconds: Double) {
         let target = max(0, seconds)
         currentTime = target
         clock.time = target
+        lyricsClock.time = target
         let time = CMTime(seconds: target, preferredTimescale: 600)
         player.seek(to: time) { [weak self] _ in
             Task { @MainActor in self?.updateNowPlaying() }
@@ -239,6 +260,8 @@ final class PlaybackCoordinator: ObservableObject {
         currentTrack = nil
         currentTime = 0
         clock.time = 0
+        lyricsClock.time = 0
+        pendingSeek = nil
         duration = 0
         NowPlayingCenter.shared.clear()
     }
@@ -263,6 +286,10 @@ final class PlaybackCoordinator: ObservableObject {
                         AudioSessionController.shared.activate()
                         self.player.play()
                         self.isPlaying = true
+                        if let pendingSeek = self.pendingSeek {
+                            self.pendingSeek = nil
+                            self.seek(to: pendingSeek)
+                        }
                         self.updateNowPlaying()
                     case .failed:
                         self.isBuffering = false
@@ -277,6 +304,7 @@ final class PlaybackCoordinator: ObservableObject {
             currentTrack = track
             currentTime = 0
             clock.time = 0
+            lyricsClock.time = 0
             duration = 0
             NowPlayingCenter.shared.update(track: track, elapsed: 0, duration: 0, rate: 1)
         } catch {
@@ -303,6 +331,17 @@ final class PlaybackCoordinator: ObservableObject {
                     if value.isFinite { self.duration = value }
                 }
                 self.updateNowPlaying()
+            }
+        }
+
+        lyricTimeObserver = player.addPeriodicTimeObserver(
+            forInterval: CMTime(seconds: 0.1, preferredTimescale: 600),
+            queue: .main
+        ) { [weak self] time in
+            Task { @MainActor in
+                guard let self else { return }
+                let seconds = CMTimeGetSeconds(time)
+                self.lyricsClock.time = seconds.isFinite ? seconds : 0
             }
         }
 

@@ -46,6 +46,9 @@ struct PlayerView: View {
                         }
                         .padding(.top, 18)
 
+                        QualityMenuView()
+                            .padding(.top, 2)
+
                         transportControls
                             .padding(.top, 12)
 
