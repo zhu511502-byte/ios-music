@@ -282,3 +282,166 @@ struct OnlinePlaylistRow: View {
         .padding(.vertical, 4)
     }
 }
+
+/// Cover-derived animated mesh gradient, modelled on kunyin's
+/// `AlbumMeshBackground`. Four dominant cover colours drift behind a heavily
+/// blurred copy of the artwork, which gives the player the slow "liquid glass"
+/// light show Apple Music uses instead of a static blur.
+struct CoverMeshBackground: View {
+    let url: URL?
+    var intensity: Double = 0.9
+    var artworkOpacity: Double = 0.5
+
+    @State private var palette: [Color] = CoverMeshBackground.fallbackPalette
+
+    static let fallbackPalette: [Color] = [
+        Color(red: 0.24, green: 0.30, blue: 0.52),
+        Color(red: 0.46, green: 0.26, blue: 0.48),
+        Color(red: 0.18, green: 0.42, blue: 0.46),
+        Color(red: 0.52, green: 0.28, blue: 0.30)
+    ]
+
+    var body: some View {
+        ZStack {
+            Color.black
+
+            if let url {
+                GeometryReader { geometry in
+                    AsyncImage(url: url) { phase in
+                        if let image = phase.image {
+                            image.resizable()
+                                .scaledToFill()
+                                .frame(width: geometry.size.width, height: geometry.size.height)
+                                .clipped()
+                                .blur(radius: 78)
+                                .scaleEffect(1.22)
+                                .opacity(artworkOpacity)
+                        }
+                    }
+                }
+            }
+
+            TimelineView(.animation(minimumInterval: 1.0 / 20.0)) { context in
+                let t = context.date.timeIntervalSinceReferenceDate
+                GeometryReader { geometry in
+                    let w = max(geometry.size.width, 1)
+                    let h = max(geometry.size.height, 1)
+                    ZStack {
+                        ForEach(0..<4, id: \.self) { index in
+                            Ellipse()
+                                .fill(
+                                    RadialGradient(
+                                        colors: [
+                                            palette[index % palette.count].opacity(0.72),
+                                            palette[index % palette.count].opacity(0.24),
+                                            .clear
+                                        ],
+                                        center: .center,
+                                        startRadius: 0,
+                                        endRadius: max(w, h) * 0.52
+                                    )
+                                )
+                                .frame(width: w * (0.92 + CGFloat(index) * 0.14),
+                                       height: h * (0.72 + CGFloat(index) * 0.10))
+                                .offset(
+                                    x: CGFloat(sin(t * (0.11 + Double(index) * 0.017) + Double(index) * 1.7)) * w * 0.26,
+                                    y: CGFloat(cos(t * (0.09 + Double(index) * 0.013) + Double(index) * 0.9)) * h * 0.20
+                                )
+                                .blur(radius: 58)
+                        }
+                    }
+                    .blendMode(.screen)
+                }
+            }
+            .opacity(intensity)
+            .allowsHitTesting(false)
+        }
+        .task(id: url?.absoluteString) {
+            palette = await CoverPaletteStore.shared.palette(for: url)
+        }
+    }
+}
+
+/// Extracts four representative colours (one per cover quadrant) and boosts
+/// their saturation so they read as light rather than mud once blurred.
+@MainActor
+final class CoverPaletteStore {
+    static let shared = CoverPaletteStore()
+
+    private var cache: [String: [Color]] = [:]
+    private var running: [String: Task<[Color], Never>] = [:]
+
+    func palette(for url: URL?) async -> [Color] {
+        guard let url else { return CoverMeshBackground.fallbackPalette }
+        let key = url.absoluteString
+        if let cached = cache[key] { return cached }
+        if let task = running[key] { return await task.value }
+
+        let task = Task<[Color], Never> {
+            guard let result = try? await URLSession.shared.data(from: url),
+                  let image = UIImage(data: result.0) else {
+                return CoverMeshBackground.fallbackPalette
+            }
+            return CoverPaletteStore.extract(from: image)
+        }
+        running[key] = task
+        let colors = await task.value
+        running[key] = nil
+        cache[key] = colors
+        return colors
+    }
+
+    private static func extract(from image: UIImage) -> [Color] {
+        let side = 40
+        var pixels = [UInt8](repeating: 0, count: side * side * 4)
+        guard let cgImage = image.cgImage,
+              let context = CGContext(
+                data: &pixels,
+                width: side,
+                height: side,
+                bitsPerComponent: 8,
+                bytesPerRow: side * 4,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+              ) else {
+            return CoverMeshBackground.fallbackPalette
+        }
+        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: side, height: side))
+
+        var colors: [Color] = []
+        let half = side / 2
+        for quadrant in 0..<4 {
+            let originX = (quadrant % 2) * half
+            let originY = (quadrant / 2) * half
+            var red = 0, green = 0, blue = 0, count = 0
+            for y in originY..<(originY + half) {
+                for x in originX..<(originX + half) {
+                    let index = (y * side + x) * 4
+                    red += Int(pixels[index])
+                    green += Int(pixels[index + 1])
+                    blue += Int(pixels[index + 2])
+                    count += 1
+                }
+            }
+            guard count > 0 else { continue }
+            colors.append(boosted(
+                CGFloat(red) / CGFloat(count) / 255,
+                CGFloat(green) / CGFloat(count) / 255,
+                CGFloat(blue) / CGFloat(count) / 255
+            ))
+        }
+        return colors.isEmpty ? CoverMeshBackground.fallbackPalette : colors
+    }
+
+    private static func boosted(_ red: CGFloat, _ green: CGFloat, _ blue: CGFloat) -> Color {
+        var hue: CGFloat = 0
+        var saturation: CGFloat = 0
+        var brightness: CGFloat = 0
+        var alpha: CGFloat = 1
+        UIColor(red: red, green: green, blue: blue, alpha: 1)
+            .getHue(&hue, saturation: &saturation, brightness: &brightness, alpha: &alpha)
+        saturation = min(1, saturation * 1.45 + 0.16)
+        brightness = min(0.86, max(0.34, brightness * 1.05))
+        return Color(hue: Double(hue), saturation: Double(saturation), brightness: Double(brightness))
+    }
+}

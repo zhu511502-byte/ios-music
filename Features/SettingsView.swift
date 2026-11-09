@@ -60,7 +60,16 @@ struct SettingsView: View {
                 Task {
                     if let data = try? await item.loadTransferable(type: Data.self),
                        let image = UIImage(data: data) {
-                        await MainActor.run { settings.setBackgroundImage(image) }
+                        await MainActor.run {
+                            settings.setBackgroundImage(image)
+                            message = "背景图已保存"
+                            showMessage = true
+                        }
+                    } else {
+                        await MainActor.run {
+                            message = "读取照片失败，请换一张试试"
+                            showMessage = true
+                        }
                     }
                     await MainActor.run { selectedPhoto = nil }
                 }
@@ -206,6 +215,20 @@ struct SettingsView: View {
 
     private var appearanceSection: some View {
         Section {
+            if let image = settings.backgroundImage {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 140)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                    )
+                    .listRowInsets(EdgeInsets(top: 8, leading: 0, bottom: 8, trailing: 0))
+            }
+
             PhotosPicker(selection: $selectedPhoto, matching: .images, photoLibrary: .shared()) {
                 Label(settings.hasCustomBackground ? "更换背景图" : "选择背景图", systemImage: "photo.on.rectangle.angled")
                     .foregroundStyle(AppTheme.accent)

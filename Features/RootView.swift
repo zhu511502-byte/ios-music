@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct RootView: View {
     @EnvironmentObject private var player: PlaybackCoordinator
@@ -6,6 +7,15 @@ struct RootView: View {
     @EnvironmentObject private var settings: SettingsStore
     @State private var showPlayer = false
     @State private var selectedTab = 0
+
+    init() {
+        let appearance = UITabBarAppearance()
+        appearance.configureWithTransparentBackground()
+        appearance.backgroundEffect = UIBlurEffect(style: .systemUltraThinMaterialDark)
+        appearance.backgroundColor = UIColor.black.withAlphaComponent(0.12)
+        UITabBar.appearance().standardAppearance = appearance
+        UITabBar.appearance().scrollEdgeAppearance = appearance
+    }
 
     var body: some View {
         TabView(selection: $selectedTab) {
@@ -26,9 +36,7 @@ struct RootView: View {
                 .tag(3)
         }
         .tint(AppTheme.accent)
-        .background {
-            AppBackgroundView()
-        }
+        .background(Color.clear)
         .task {
             await model.start()
         }
@@ -43,15 +51,20 @@ struct RootView: View {
         }
     }
 
-    /// Keep the mini player inside each tab's safe area so it sits above the
-    /// native tab bar instead of covering it.
+    /// The backdrop has to live inside each tab. A `.background` on the
+    /// TabView sits behind UITabBarController's own opaque view, which is why
+    /// a custom photo previously never showed up on the main screens.
     private func tab<Content: View>(_ content: Content) -> some View {
-        content.safeAreaInset(edge: .bottom, spacing: 0) {
-            if player.currentTrack != nil {
-                MiniPlayerView { showPlayer = true }
-                    .padding(.horizontal, 10)
-                    .padding(.bottom, 4)
-            }
+        ZStack {
+            AppBackgroundView()
+            content
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    if player.currentTrack != nil {
+                        MiniPlayerView { showPlayer = true }
+                            .padding(.horizontal, 10)
+                            .padding(.bottom, 4)
+                    }
+                }
         }
     }
 

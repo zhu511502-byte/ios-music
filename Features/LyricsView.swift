@@ -15,6 +15,7 @@ struct LyricsView: View {
     @State private var isImmersive = false
     @State private var showAddToPlaylist = false
     @State private var lastInteraction = Date()
+    @State private var isLandscape = false
 
     var body: some View {
         GeometryReader { geometry in
@@ -28,7 +29,10 @@ struct LyricsView: View {
                 } else {
                     portraitLayout(size: geometry.size)
                 }
-
+            }
+            .onAppear { isLandscape = landscape }
+            .onChange(of: geometry.size) { size in
+                isLandscape = size.width > size.height
             }
         }
         .animation(.easeInOut(duration: 0.3), value: isImmersive)
@@ -63,28 +67,35 @@ struct LyricsView: View {
     // MARK: - Layouts
 
     private func portraitLayout(size: CGSize) -> some View {
-        VStack(spacing: 0) {
-            if !isImmersive {
-                portraitHeader
-                    .transition(.opacity)
-            }
-
+        // Header/footer are overlays, not layout siblings. Hiding them for
+        // immersive mode therefore does not resize the lyrics scroll view —
+        // that was what made the highlighted line jump.
+        ZStack(alignment: .bottom) {
             lyricsContent(isLandscape: false)
                 .id("lyrics-content-portrait")
 
             if !isImmersive {
-                portraitFooter
-                    .transition(.opacity)
+                VStack(spacing: 0) {
+                    portraitHeader
+                    Spacer(minLength: 0)
+                    portraitFooter
+                }
+                .transition(.opacity)
             }
         }
     }
 
     private func landscapeLayout(size: CGSize) -> some View {
-        HStack(spacing: 0) {
+        let panelWidth = min(max(300, size.width * 0.4), 470)
+        return HStack(spacing: 0) {
             if !isImmersive {
                 landscapePanel(size: size)
-                    .frame(width: min(max(300, size.width * 0.4), 470))
+                    .frame(width: panelWidth)
                     .transition(.opacity)
+            } else {
+                // Keep the lyrics column the same width in immersive mode so
+                // entering/leaving full screen cannot reflow the text.
+                Color.clear.frame(width: panelWidth)
             }
 
             lyricsContent(isLandscape: true)
@@ -385,13 +396,13 @@ struct LyricsView: View {
                 .padding(32)
             } else if let lyrics = lyrics, !lyrics.isEmpty {
                 if lyrics.isSynced {
-                    SyncedLyricsView(
+                    LyricsViewportView(
                         lyrics: lyrics,
                         clock: player.clock,
                         lyricsClock: player.lyricsClock,
-                        activeSize: isLandscape ? 27 : 26,
-                        inactiveSize: isLandscape ? 23 : 22,
-                        karaoke: settings.karaokeLyrics || lyrics.isWordTimed,
+                        activeSize: isLandscape ? 31 : 30,
+                        inactiveSize: isLandscape ? 24 : 23,
+                        karaoke: settings.karaokeLyrics,
                         isImmersive: isImmersive,
                         horizontalPadding: isLandscape ? (isImmersive ? 70 : 38) : 24,
                         onSeek: { time in player.seek(to: time) },
@@ -426,45 +437,14 @@ struct LyricsView: View {
 
     private var background: some View {
         ZStack {
-            Color.black
-
-            if let custom = settings.backgroundImage {
-                GeometryReader { geometry in
-                    Image(uiImage: custom)
-                        .resizable()
-                        .scaledToFill()
-                        .frame(width: geometry.size.width, height: geometry.size.height)
-                        .clipped()
-                        .blur(radius: max(settings.backgroundBlur, 0.5))
-                        .scaleEffect(1.08)
-                        .opacity(settings.backgroundOpacity)
-                }
-                .ignoresSafeArea()
-            } else if let url = player.currentTrack?.picURL {
-                GeometryReader { geometry in
-                    AsyncImage(url: url) { phase in
-                        if let image = phase.image {
-                            image.resizable()
-                                .scaledToFill()
-                                .frame(width: geometry.size.width, height: geometry.size.height)
-                                .clipped()
-                                .blur(radius: 65)
-                                .scaleEffect(1.12)
-                                .opacity(0.55)
-                        }
-                    }
-                }
-                .ignoresSafeArea()
-            }
-
-            FlowingGlowView(intensity: 0.5)
+            CoverMeshBackground(url: player.currentTrack?.picURL, intensity: 0.95, artworkOpacity: 0.55)
 
             LinearGradient(
                 stops: [
-                    .init(color: .black.opacity(0.12), location: 0),
-                    .init(color: .black.opacity(0.35), location: 0.45),
-                    .init(color: .black.opacity(0.78), location: 0.8),
-                    .init(color: .black.opacity(0.92), location: 1)
+                    .init(color: .black.opacity(0.20), location: 0),
+                    .init(color: .black.opacity(0.16), location: 0.35),
+                    .init(color: .black.opacity(0.48), location: 0.72),
+                    .init(color: .black.opacity(0.86), location: 1)
                 ],
                 startPoint: .top,
                 endPoint: .bottom
@@ -481,7 +461,7 @@ struct LyricsView: View {
         while !Task.isCancelled {
             try? await Task.sleep(nanoseconds: 1_000_000_000)
             guard !Task.isCancelled else { return }
-            guard !isImmersive, player.isPlaying else { continue }
+            guard !isImmersive, !isLandscape, player.isPlaying else { continue }
             if Date().timeIntervalSince(lastInteraction) >= 10 {
                 withAnimation(.easeInOut(duration: 0.35)) { isImmersive = true }
             }
@@ -528,184 +508,6 @@ struct LyricsView: View {
     }
 }
 
-// MARK: - Synced lyrics
-
-private struct SyncedLyricsView: View {
-    let lyrics: Lyrics
-    @ObservedObject var clock: PlaybackClock
-    let lyricsClock: LyricsClock
-    let activeSize: CGFloat
-    let inactiveSize: CGFloat
-    let karaoke: Bool
-    let isImmersive: Bool
-    let horizontalPadding: CGFloat
-    let onSeek: (Double) -> Void
-    let onExitImmersive: () -> Void
-
-    @State private var activeIndex: Int?
-
-    private var currentIndex: Int? {
-        lyrics.lines.lastIndex { ($0.time ?? -1) <= clock.time + 0.05 }
-    }
-
-    var body: some View {
-        GeometryReader { geometry in
-            ScrollViewReader { proxy in
-                ScrollView(showsIndicators: false) {
-                    VStack(alignment: .leading, spacing: 0) {
-                        Color.clear
-                            .frame(height: max(80, geometry.size.height * 0.45))
-
-                        ForEach(lyrics.lines) { line in
-                            lyricLine(line, isActive: line.id == activeIndex)
-                                .id(line.id)
-                        }
-
-                        Color.clear
-                            .frame(height: max(140, geometry.size.height * 0.55))
-                    }
-                    .padding(.horizontal, horizontalPadding)
-                }
-                .mask(
-                    LinearGradient(
-                        stops: [
-                            .init(color: .clear, location: 0),
-                            .init(color: .white, location: 0.08),
-                            .init(color: .white, location: 0.86),
-                            .init(color: .clear, location: 1)
-                        ],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                )
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    if isImmersive { onExitImmersive() }
-                }
-                .onAppear {
-                    let index = currentIndex
-                    activeIndex = index
-                    guard let index else { return }
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
-                        proxy.scrollTo(index, anchor: UnitPoint(x: 0.5, y: 0.42))
-                    }
-                }
-                .onChange(of: currentIndex) { index in
-                    guard index != activeIndex else { return }
-                    activeIndex = index
-                    guard let index else { return }
-                    withAnimation(.spring(response: 0.65, dampingFraction: 0.9)) {
-                        proxy.scrollTo(index, anchor: UnitPoint(x: 0.5, y: 0.42))
-                    }
-                }
-                .onChange(of: isImmersive) { _ in
-                    // Re-center after the header/footer disappear so the
-                    // highlighted line doesn't jump to another part of the screen.
-                    guard let index = activeIndex ?? currentIndex else { return }
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
-                        withAnimation(.easeInOut(duration: 0.35)) {
-                            proxy.scrollTo(index, anchor: UnitPoint(x: 0.5, y: 0.42))
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func lyricLine(_ line: LyricLine, isActive: Bool) -> some View {
-        if isActive, karaoke, line.hasWordTiming {
-            KaraokeLineView(line: line, clock: lyricsClock, fontSize: activeSize)
-                .padding(.vertical, 13)
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    if isImmersive {
-                        onExitImmersive()
-                    } else if let time = line.time {
-                        onSeek(time)
-                    }
-                }
-        } else {
-            Text(line.text)
-                .font(.system(size: isActive ? activeSize : inactiveSize, weight: .bold))
-                .foregroundStyle(isActive ? Color.white : Color.white.opacity(0.34))
-                .lineSpacing(5)
-                .multilineTextAlignment(.leading)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.vertical, 13)
-                .scaleEffect(isActive ? 1 : 0.97, anchor: .leading)
-                .opacity(isActive ? 1 : 0.92)
-                .animation(.easeInOut(duration: 0.22), value: isActive)
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    if isImmersive {
-                        onExitImmersive()
-                    } else if let time = line.time {
-                        onSeek(time)
-                    }
-                }
-        }
-    }
-}
-
-// MARK: - Karaoke (character-by-character) line
-
-private struct KaraokeLineView: View {
-    let line: LyricLine
-    @ObservedObject var clock: LyricsClock
-    let fontSize: CGFloat
-
-    /// Continuous 0...1 fill across the line, interpolated inside the current
-    /// character. Rendering a clipped copy of the text makes the highlight
-    /// glide instead of stepping character-by-character.
-    private var fillProgress: Double {
-        guard let start = line.time, clock.time >= start else { return 0 }
-        let times = line.wordTimes
-        guard !times.isEmpty else { return 1 }
-
-        var filled = 0.0
-        for index in times.indices {
-            let startTime = times[index]
-            let endTime = index + 1 < times.count
-                ? times[index + 1]
-                : (line.endTime ?? startTime + 0.35)
-            if clock.time >= endTime {
-                filled += 1
-            } else if clock.time > startTime {
-                let span = max(endTime - startTime, 0.06)
-                filled += min(max((clock.time - startTime) / span, 0), 1)
-                break
-            } else {
-                break
-            }
-        }
-        return min(filled / Double(max(line.text.count, 1)), 1)
-    }
-
-    var body: some View {
-        ZStack(alignment: .leading) {
-            Text(line.text)
-                .foregroundStyle(.white.opacity(0.30))
-
-            Text(line.text)
-                .foregroundStyle(.white)
-                .mask(alignment: .leading) {
-                    GeometryReader { geometry in
-                        Rectangle()
-                            .fill(.white)
-                            .frame(width: max(0, geometry.size.width * fillProgress))
-                            .animation(.linear(duration: 0.12), value: fillProgress)
-                    }
-                }
-        }
-        .font(.system(size: fontSize, weight: .bold))
-        .lineLimit(1)
-        .minimumScaleFactor(0.7)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .accessibilityLabel(line.text)
-    }
-}
-
 // MARK: - Plain lyrics
 
 private struct PlainLyricsView: View {
@@ -724,8 +526,8 @@ private struct PlainLyricsView: View {
                 }
             }
             .padding(.horizontal, horizontalPadding)
-            .padding(.top, 30)
-            .padding(.bottom, 40)
+            .padding(.top, 74)
+            .padding(.bottom, 190)
         }
     }
 }

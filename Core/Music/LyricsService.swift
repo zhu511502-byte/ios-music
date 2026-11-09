@@ -55,37 +55,95 @@ actor LyricsService {
         let key = track.id
         if let cached = cache[key] { return cached }
 
-        let parsed: Lyrics
-        if let embedded = embeddedLyrics(track) {
-            parsed = LyricsParser.parse(embedded)
-        } else if let local = localSidecarLyrics(track) {
-            parsed = LyricsParser.parse(local)
-        } else if let url = lyricURL(track) {
-            parsed = LyricsParser.parse(try await fetchText(url))
-        } else {
-            var yrcLyrics: Lyrics?
-            if track.source == "wy" {
-                // Any yrc failure must fall back to the normal LRC lyric
-                // endpoint instead of surfacing a parser error.
-                yrcLyrics = try? await neteaseYRCLyrics(track)
-            }
-            if let yrcLyrics {
-                parsed = yrcLyrics
-            } else {
-                do {
+        var parsed: Lyrics?
+        do {
+            if let embedded = embeddedLyrics(track) {
+                parsed = LyricsParser.parse(embedded)
+            } else if let local = localSidecarLyrics(track) {
+                parsed = LyricsParser.parse(local)
+            } else if let url = lyricURL(track) {
+                parsed = LyricsParser.parse((try? await fetchText(url)) ?? "")
+                if parsed?.isEmpty != false {
                     parsed = LyricsParser.parse(try await platformLyrics(track))
-                } catch let error as MusicAPIError {
-                    // A non-JSON/HTML response means "no usable lyric" rather
-                    // than a scary "格式不正确" error.
-                    if case .invalidResponse = error { throw LyricsError.notFound }
-                    throw error
+                }
+            } else {
+                var wordLyrics: Lyrics?
+                if track.source == "wy" {
+                    wordLyrics = try? await neteaseYRCLyrics(track)
+                } else if track.source == "kg" {
+                    wordLyrics = await kugouKRCLyrics(track)
+                }
+                if let wordLyrics {
+                    parsed = wordLyrics
+                } else {
+                    parsed = LyricsParser.parse(try await platformLyrics(track))
+                }
+            }
+        } catch {
+            // Fall through to the cross-platform search below.
+            parsed = nil
+        }
+
+        if parsed?.isEmpty != false {
+            parsed = await fallbackLyrics(for: track)
+        }
+
+        guard let result = parsed, !result.isEmpty else { throw LyricsError.notFound }
+        cache[key] = result
+        return result
+    }
+
+    /// When the track's own platform has no usable lyric, search the other
+    /// platforms by title/artist and use the first confident match.
+    private func fallbackLyrics(for track: MusicInfo) async -> Lyrics? {
+        let title = track.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty else { return nil }
+        let query = [title, track.singer]
+            .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .joined(separator: " ")
+
+        for source in ["wy", "tx", "kw", "kg"] where source != track.source {
+            guard let page = try? await NativeMusicAPI.shared.search(source: source, query: query, page: 1, limit: 8),
+                  !page.items.isEmpty else { continue }
+
+            let normalizedTitle = normalize(title)
+            let normalizedSinger = normalize(track.singer)
+            let candidates = page.items.filter { item in
+                let itemTitle = normalize(item.name)
+                let itemSinger = normalize(item.singer)
+                let titleMatches = itemTitle == normalizedTitle
+                    || itemTitle.contains(normalizedTitle)
+                    || normalizedTitle.contains(itemTitle)
+                let singerMatches = normalizedSinger.isEmpty
+                    || itemSinger.contains(normalizedSinger)
+                    || normalizedSinger.contains(itemSinger)
+                return titleMatches && singerMatches
+            }
+
+            for candidate in (candidates.isEmpty ? Array(page.items.prefix(1)) : Array(candidates.prefix(2))) {
+                if let lyrics = await lyricsFromCandidate(candidate) {
+                    return lyrics
                 }
             }
         }
+        return nil
+    }
 
-        guard !parsed.isEmpty else { throw LyricsError.notFound }
-        cache[key] = parsed
-        return parsed
+    private func lyricsFromCandidate(_ track: MusicInfo) async -> Lyrics? {
+        if track.source == "wy", let yrc = try? await neteaseYRCLyrics(track), !yrc.isEmpty {
+            return yrc
+        }
+        guard let text = try? await platformLyrics(track), !text.isEmpty else { return nil }
+        let parsed = LyricsParser.parse(text)
+        return parsed.isEmpty ? nil : parsed
+    }
+
+    private func normalize(_ value: String) -> String {
+        value
+            .lowercased()
+            .replacingOccurrences(of: " ", with: "")
+            .replacingOccurrences(of: "　", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     // MARK: - Sources
@@ -229,6 +287,40 @@ actor LyricsService {
         return parsed
     }
 
+    /// Download Kugou's encrypted KRC and parse its real per-word timings.
+    private func kugouKRCLyrics(_ track: MusicInfo) async -> Lyrics? {
+        guard track.source == "kg" else { return nil }
+        let hash = track.meta["hash"]?.stringValue ?? ""
+        guard !hash.isEmpty else { return nil }
+        let searchURL = try? makeURL("https://krcs.kugou.com/search", [
+            ("ver", "1"), ("man", "yes"), ("client", "mobi"),
+            ("keyword", ""), ("duration", ""), ("hash", hash)
+        ])
+        guard let searchURL,
+              let search = try? await fetchJSON(searchURL),
+              let candidate = MusicParse.objects(search["candidates"]).first else {
+            return nil
+        }
+        let id = MusicParse.string(candidate["id"])
+        let accessKey = MusicParse.string(candidate["accesskey"])
+        guard !id.isEmpty, !accessKey.isEmpty else { return nil }
+        guard let downloadURL = try? makeURL("https://lyrics.kugou.com/download", [
+            ("ver", "1"), ("client", "pc"), ("id", id),
+            ("accesskey", accessKey), ("fmt", "krc"), ("charset", "utf8")
+        ]),
+              let download = try? await fetchJSON(downloadURL) else {
+            return nil
+        }
+        let content = MusicParse.string(download["content"])
+        guard let data = Data(base64Encoded: content),
+              let raw = LyricCrypto.decryptKRC(data),
+              let parsed = KRCParser.parse(raw),
+              !parsed.isEmpty else {
+            return nil
+        }
+        return parsed
+    }
+
     // MARK: - HTTP
 
     private func makeURL(_ base: String, _ query: [(String, String)]) throws -> URL {
@@ -353,11 +445,15 @@ enum LyricsParser {
         guard start.isFinite else { return [] }
         let characters = Array(text)
         guard !characters.isEmpty else { return [] }
+        // For plain LRC the gap to the next line can contain a long
+        // instrumental break. Cap the synthetic duration to a realistic
+        // singing time so karaoke does not crawl through the whole gap.
+        let maximum = max(2.0, Double(characters.count) * 0.32)
         let duration: Double
         if let end = end, end > start, end.isFinite {
-            duration = end - start
+            duration = min(end - start, maximum)
         } else {
-            duration = 3.2
+            duration = min(3.2, maximum)
         }
         let weights = characters.map { character -> Double in
             let scalar = character.unicodeScalars.first

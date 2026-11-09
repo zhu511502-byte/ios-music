@@ -4,7 +4,6 @@ import UIKit
 struct PlayerView: View {
     @EnvironmentObject private var player: PlaybackCoordinator
     @EnvironmentObject private var library: LibraryStore
-    @EnvironmentObject private var settings: SettingsStore
     @Environment(\.dismiss) private var dismiss
 
     @State private var showLyrics = false
@@ -35,8 +34,10 @@ struct PlayerView: View {
 
                 ScrollView(showsIndicators: false) {
                     VStack(spacing: 0) {
-                        ArtworkView(url: player.currentTrack?.picURL, size: artworkSize, cornerRadius: 12)
-                            .shadow(color: .black.opacity(0.5), radius: 28, y: 20)
+                        ArtworkView(url: player.currentTrack?.picURL, size: artworkSize, cornerRadius: 14)
+                            .shadow(color: .black.opacity(0.55), radius: 34, y: 22)
+                            .scaleEffect(player.isPlaying ? 1 : 0.94)
+                            .animation(.spring(response: 0.55, dampingFraction: 0.82), value: player.isPlaying)
                             .padding(.top, 22)
 
                         titleBlock
@@ -97,37 +98,15 @@ struct PlayerView: View {
 
     private var background: some View {
         ZStack {
-            Color.black
-            if let custom = settings.backgroundImage {
-                GeometryReader { geometry in
-                    Image(uiImage: custom)
-                        .resizable()
-                        .scaledToFill()
-                        .frame(width: geometry.size.width, height: geometry.size.height)
-                        .clipped()
-                        .blur(radius: max(settings.backgroundBlur, 0.5))
-                        .opacity(settings.backgroundOpacity)
-                }
-                .ignoresSafeArea()
-            } else if let url = player.currentTrack?.picURL {
-                GeometryReader { geometry in
-                    AsyncImage(url: url) { phase in
-                        if let image = phase.image {
-                            image.resizable()
-                                .scaledToFill()
-                                .frame(width: geometry.size.width, height: geometry.size.height)
-                                .clipped()
-                                .blur(radius: 65)
-                                .opacity(0.45)
-                        }
-                    }
-                }
-                .ignoresSafeArea()
-            }
-            FlowingGlowView(intensity: 0.35)
+            CoverMeshBackground(url: player.currentTrack?.picURL, intensity: 0.9, artworkOpacity: 0.55)
 
             LinearGradient(
-                colors: [.black.opacity(0.12), .black.opacity(0.42), .black],
+                stops: [
+                    .init(color: .black.opacity(0.18), location: 0),
+                    .init(color: .black.opacity(0.10), location: 0.34),
+                    .init(color: .black.opacity(0.46), location: 0.74),
+                    .init(color: .black.opacity(0.88), location: 1)
+                ],
                 startPoint: .top,
                 endPoint: .bottom
             )

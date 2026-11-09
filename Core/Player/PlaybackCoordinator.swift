@@ -318,7 +318,7 @@ final class PlaybackCoordinator: ObservableObject {
 
     private func installObservers() {
         timeObserver = player.addPeriodicTimeObserver(
-            forInterval: CMTime(seconds: 0.5, preferredTimescale: 600),
+            forInterval: CMTime(seconds: 0.25, preferredTimescale: 600),
             queue: .main
         ) { [weak self] time in
             Task { @MainActor in
