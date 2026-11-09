@@ -407,7 +407,7 @@ struct LyricsView: View {
                         lyricsClock: player.lyricsClock,
                         activeSize: isLandscape ? 31 : 30,
                         inactiveSize: isLandscape ? 24 : 23,
-                        karaoke: settings.karaokeLyrics,
+                        karaoke: settings.karaokeLyrics || lyrics.isWordTimed,
                         isImmersive: isImmersive,
                         horizontalPadding: isLandscape ? (isImmersive ? 70 : 38) : 24,
                         onSeek: { time in player.seek(to: time) },

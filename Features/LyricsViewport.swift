@@ -109,7 +109,7 @@ struct LyricsViewportView: View {
 
     @ViewBuilder
     private func lyricLine(_ line: LyricLine, isActive: Bool) -> some View {
-        if isActive, karaoke, line.hasWordTiming {
+        if isActive, karaoke, line.time != nil {
             KaraokeLineView(line: line, clock: lyricsClock, fontSize: activeSize)
                 .padding(.vertical, 13)
                 .contentShape(Rectangle())
@@ -152,9 +152,24 @@ private struct KaraokeLineView: View {
     @ObservedObject var clock: LyricsClock
     let fontSize: CGFloat
 
+    /// Real enhanced timings when they line up with the rendered text;
+    /// otherwise distribute the line duration across its characters so a
+    /// missing/HTML-decoded timing still produces a per-character wipe.
+    private var effectiveTimes: [Double] {
+        if line.wordTimes.count == line.text.count { return line.wordTimes }
+        guard let start = line.time else { return [] }
+        let characters = Array(line.text)
+        guard !characters.isEmpty else { return [] }
+        let end = line.endTime ?? (start + min(max(Double(characters.count) * 0.32, 2.0), 4.0))
+        let duration = max(end - start, 0.4)
+        return characters.indices.map { index in
+            start + duration * Double(index) / Double(characters.count)
+        }
+    }
+
     private var fillProgress: Double {
         guard let start = line.time, clock.time >= start else { return 0 }
-        let times = line.wordTimes
+        let times = effectiveTimes
         guard !times.isEmpty else { return 1 }
 
         var filled = 0.0
