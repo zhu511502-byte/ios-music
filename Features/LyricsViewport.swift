@@ -13,6 +13,7 @@ struct LyricsViewportView: View {
     let activeSize: CGFloat
     let inactiveSize: CGFloat
     let karaoke: Bool
+    let isPlaying: Bool
     let isImmersive: Bool
     let horizontalPadding: CGFloat
     let onSeek: (Double) -> Void
@@ -110,7 +111,8 @@ struct LyricsViewportView: View {
     @ViewBuilder
     private func lyricLine(_ line: LyricLine, isActive: Bool) -> some View {
         if isActive, karaoke, line.time != nil {
-            KaraokeLineView(line: line, clock: lyricsClock, fontSize: activeSize)
+            KaraokeTextLayerView(line: line, clock: lyricsClock, fontSize: activeSize, isPlaying: isPlaying)
+                    .frame(height: activeSize * 1.2)
                 .padding(.vertical, 13)
                 .contentShape(Rectangle())
                 .onTapGesture {
@@ -142,64 +144,5 @@ struct LyricsViewportView: View {
                     }
                 }
         }
-    }
-}
-
-// MARK: - Karaoke line
-
-/// The lighter, older karaoke renderer: one continuous mask driven by the
-/// isolated 10 Hz lyric clock. It intentionally avoids measuring every glyph
-/// on every line, which is what made the "accurate" rewrite stutter on older
-/// devices.
-private struct KaraokeLineView: View {
-    let line: LyricLine
-    @ObservedObject var clock: LyricsClock
-    let fontSize: CGFloat
-
-    private var fillProgress: Double {
-        guard let start = line.time, clock.time >= start else { return 0 }
-        let times = line.wordTimes
-        guard !times.isEmpty else { return 1 }
-
-        var filled = 0.0
-        for index in times.indices {
-            let startTime = times[index]
-            let endTime = index + 1 < times.count
-                ? times[index + 1]
-                : (line.endTime ?? startTime + 0.35)
-            if clock.time >= endTime {
-                filled += 1
-            } else if clock.time > startTime {
-                let span = max(endTime - startTime, 0.06)
-                filled += min(max((clock.time - startTime) / span, 0), 1)
-                break
-            } else {
-                break
-            }
-        }
-        return min(filled / Double(max(line.text.count, 1)), 1)
-    }
-
-    var body: some View {
-        ZStack(alignment: .leading) {
-            Text(line.text)
-                .foregroundStyle(.white.opacity(0.30))
-
-            Text(line.text)
-                .foregroundStyle(.white)
-                .mask(alignment: .leading) {
-                    GeometryReader { geometry in
-                        Rectangle()
-                            .fill(.white)
-                            .frame(width: max(0, geometry.size.width * fillProgress))
-                            .animation(.linear(duration: 0.12), value: fillProgress)
-                    }
-                }
-        }
-        .font(.system(size: fontSize, weight: .bold))
-        .lineLimit(1)
-        .minimumScaleFactor(0.7)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .accessibilityLabel(line.text)
     }
 }
