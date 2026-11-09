@@ -7,7 +7,7 @@ struct PlayerView: View {
     @EnvironmentObject private var theme: ThemeStore
     @Environment(\.dismiss) private var dismiss
 
-    @State private var showLyrics = false
+    @State private var page = 0
     @State private var showAddToPlaylist = false
     @State private var autoPresentedLandscape = false
 
@@ -27,13 +27,18 @@ struct PlayerView: View {
 
     var body: some View {
         GeometryReader { geometry in
-            playerContent
-                .onAppear { updateOrientation(geometry.size) }
-                .onChange(of: geometry.size) { updateOrientation($0) }
-        }
-        .fullScreenCover(isPresented: $showLyrics) {
-            LyricsView()
-                .environmentObject(player)
+            TabView(selection: $page) {
+                playerContent
+                    .tag(0)
+
+                LyricsView(isActive: page == 1, onClose: {
+                    withAnimation(.easeInOut(duration: 0.28)) { page = 0 }
+                })
+                .tag(1)
+            }
+            .tabViewStyle(.page(indexDisplayMode: .never))
+            .onAppear { updateOrientation(geometry.size) }
+            .onChange(of: geometry.size) { updateOrientation($0) }
         }
         .sheet(isPresented: $showAddToPlaylist) {
             if let track = player.currentTrack {
@@ -112,10 +117,10 @@ struct PlayerView: View {
             autoPresentedLandscape = false
             return
         }
-        guard !autoPresentedLandscape, !showLyrics else { return }
+        guard !autoPresentedLandscape, page == 0 else { return }
         autoPresentedLandscape = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-            showLyrics = true
+            withAnimation(.easeInOut(duration: 0.35)) { page = 1 }
         }
     }
 
@@ -123,7 +128,7 @@ struct PlayerView: View {
 
     private var background: some View {
         ZStack {
-            CoverMeshBackground(url: player.currentTrack?.picURL, intensity: 0.9, artworkOpacity: 0.55)
+            CoverMeshBackground(url: player.currentTrack?.picURL, intensity: 0.9, artworkOpacity: 0.55, animated: page == 0)
 
             LinearGradient(
                 stops: [
@@ -162,7 +167,7 @@ struct PlayerView: View {
 
             Menu {
                 Button {
-                    showLyrics = true
+                    withAnimation(.easeInOut(duration: 0.28)) { page = 1 }
                 } label: {
                     Label("歌词", systemImage: "quote.bubble")
                 }
@@ -244,7 +249,9 @@ struct PlayerView: View {
 
     private var utilityControls: some View {
         HStack(spacing: 54) {
-            Button { showLyrics = true } label: {
+            Button {
+                withAnimation(.easeInOut(duration: 0.28)) { page = 1 }
+            } label: {
                 Image(systemName: "quote.bubble")
                     .font(.system(size: 20, weight: .medium))
             }

@@ -290,6 +290,7 @@ struct CoverMeshBackground: View {
     let url: URL?
     var intensity: Double = 0.9
     var artworkOpacity: Double = 0.5
+    var animated: Bool = true
 
     @State private var palette: [Color] = CoverMeshBackground.fallbackPalette
 
@@ -320,42 +321,52 @@ struct CoverMeshBackground: View {
                 }
             }
 
-            TimelineView(.periodic(from: .now, by: 0.2)) { context in
-                let t = context.date.timeIntervalSinceReferenceDate
-                GeometryReader { geometry in
-                    let w = max(geometry.size.width, 1)
-                    let h = max(geometry.size.height, 1)
-                    ZStack {
-                        ForEach(0..<4, id: \.self) { index in
-                            Ellipse()
-                                .fill(
-                                    RadialGradient(
-                                        colors: [
-                                            palette[index % palette.count].opacity(0.72),
-                                            palette[index % palette.count].opacity(0.24),
-                                            .clear
-                                        ],
-                                        center: .center,
-                                        startRadius: 0,
-                                        endRadius: max(w, h) * 0.52
-                                    )
-                                )
-                                .frame(width: w * (0.92 + CGFloat(index) * 0.14),
-                                       height: h * (0.72 + CGFloat(index) * 0.10))
-                                .offset(
-                                    x: CGFloat(sin(t * (0.11 + Double(index) * 0.017) + Double(index) * 1.7)) * w * 0.26,
-                                    y: CGFloat(cos(t * (0.09 + Double(index) * 0.013) + Double(index) * 0.9)) * h * 0.20
-                                )
-                        }
-                    }
-                    .blendMode(.screen)
+            if animated {
+                TimelineView(.periodic(from: .now, by: 0.2)) { context in
+                    meshLayer(t: context.date.timeIntervalSinceReferenceDate)
                 }
+                .opacity(intensity)
+                .allowsHitTesting(false)
+            } else {
+                meshLayer(t: 0)
+                    .opacity(intensity)
+                    .allowsHitTesting(false)
             }
-            .opacity(intensity)
-            .allowsHitTesting(false)
         }
         .task(id: url?.absoluteString) {
             palette = await CoverPaletteStore.shared.palette(for: url)
+        }
+    }
+
+    @ViewBuilder
+    private func meshLayer(t: Double) -> some View {
+        GeometryReader { geometry in
+            let w = max(geometry.size.width, 1)
+            let h = max(geometry.size.height, 1)
+            ZStack {
+                ForEach(0..<4, id: \.self) { index in
+                    Ellipse()
+                        .fill(
+                            RadialGradient(
+                                colors: [
+                                    palette[index % palette.count].opacity(0.72),
+                                    palette[index % palette.count].opacity(0.24),
+                                    .clear
+                                ],
+                                center: .center,
+                                startRadius: 0,
+                                endRadius: max(w, h) * 0.52
+                            )
+                        )
+                        .frame(width: w * (0.92 + CGFloat(index) * 0.14),
+                               height: h * (0.72 + CGFloat(index) * 0.10))
+                        .offset(
+                            x: CGFloat(sin(t * (0.11 + Double(index) * 0.017) + Double(index) * 1.7)) * w * 0.26,
+                            y: CGFloat(cos(t * (0.09 + Double(index) * 0.013) + Double(index) * 0.9)) * h * 0.20
+                        )
+                }
+            }
+            .blendMode(.screen)
         }
     }
 }

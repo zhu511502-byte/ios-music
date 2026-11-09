@@ -22,6 +22,8 @@ struct LyricsViewportView: View {
     let horizontalPadding: CGFloat
     let onSeek: (Double) -> Void
     let onExitImmersive: () -> Void
+    let onInteraction: () -> Void
+    var isPageActive: Bool = true
 
     @State private var activeIndex: Int?
     @StateObject private var scrollState = LyricScrollState()
@@ -59,6 +61,7 @@ struct LyricsViewportView: View {
                     DragGesture(minimumDistance: 12)
                         .onChanged { _ in
                             scrollState.lastInteraction = Date()
+                            onInteraction()
                             if !scrollState.isUserScrolling { scrollState.isUserScrolling = true }
                         }
                         .onEnded { _ in
@@ -75,7 +78,16 @@ struct LyricsViewportView: View {
                     }
                 }
                 .onReceive(clock.$time) { time in
+                    guard isPageActive else { return }
                     updateActiveIndex(time, proxy: proxy)
+                }
+                .onChange(of: isPageActive) { active in
+                    guard active else { return }
+                    let current = index(at: clock.time) ?? 0
+                    activeIndex = current
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                        proxy.scrollTo(current, anchor: anchor)
+                    }
                 }
                 .onChange(of: geometry.size) { _ in
                     guard let index = activeIndex else { return }
@@ -99,6 +111,7 @@ struct LyricsViewportView: View {
     @ViewBuilder
     private func lyricLine(_ line: LyricLine, isActive: Bool) -> some View {
         Button {
+            onInteraction()
             if isImmersive {
                 onExitImmersive()
             } else if let time = line.time {
@@ -106,7 +119,7 @@ struct LyricsViewportView: View {
             }
         } label: {
             Group {
-                if isActive, karaoke, line.hasWordTiming {
+                if isActive, karaoke, isPageActive, line.hasWordTiming {
                     KaraokeLyricLine(line: line, clock: lyricsClock, fontSize: activeSize)
                         .frame(height: activeSize * 1.2)
                 } else {

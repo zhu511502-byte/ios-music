@@ -3,6 +3,9 @@ import SwiftUI
 import UIKit
 
 struct LyricsView: View {
+    var isActive: Bool = true
+    var onClose: (() -> Void)? = nil
+
     @EnvironmentObject private var player: PlaybackCoordinator
     @EnvironmentObject private var settings: SettingsStore
     @EnvironmentObject private var library: LibraryStore
@@ -45,9 +48,10 @@ struct LyricsView: View {
                 }
             }
         )
-        .simultaneousGesture(
-            DragGesture(minimumDistance: 8).onChanged { _ in interaction.last = Date() }
-        )
+        .onChange(of: isActive) { active in
+            if !active { isImmersive = false }
+            interaction.last = Date()
+        }
         .task(id: player.currentTrack?.id) {
             await load()
         }
@@ -108,7 +112,7 @@ struct LyricsView: View {
 
     private var portraitHeader: some View {
         HStack(alignment: .center, spacing: 12) {
-            Button { dismiss() } label: {
+            Button { close() } label: {
                 Image(systemName: "chevron.down")
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundStyle(.white)
@@ -146,7 +150,7 @@ struct LyricsView: View {
 
         return VStack(alignment: .leading, spacing: 0) {
             HStack {
-                Button { dismiss() } label: {
+                Button { close() } label: {
                     Image(systemName: "chevron.down")
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundStyle(.white)
@@ -409,7 +413,9 @@ struct LyricsView: View {
                         onSeek: { time in player.seek(to: time) },
                         onExitImmersive: {
                             withAnimation(.easeInOut(duration: 0.25)) { isImmersive = false }
-                        }
+                        },
+                        onInteraction: { interaction.last = Date() },
+                        isPageActive: isActive
                     )
                 } else {
                     PlainLyricsView(lyrics: lyrics, horizontalPadding: isLandscape ? 48 : 26)
@@ -438,7 +444,7 @@ struct LyricsView: View {
 
     private var background: some View {
         ZStack {
-            CoverMeshBackground(url: player.currentTrack?.picURL, intensity: 0.95, artworkOpacity: 0.55)
+            CoverMeshBackground(url: player.currentTrack?.picURL, intensity: 0.95, artworkOpacity: 0.55, animated: isActive)
 
             LinearGradient(
                 stops: [
@@ -455,6 +461,14 @@ struct LyricsView: View {
         .ignoresSafeArea()
     }
 
+    private func close() {
+        if let onClose {
+            onClose()
+        } else {
+            dismiss()
+        }
+    }
+
     // MARK: - Auto immersive
 
     private func autoImmersiveLoop() async {
@@ -462,7 +476,7 @@ struct LyricsView: View {
         while !Task.isCancelled {
             try? await Task.sleep(nanoseconds: 1_000_000_000)
             guard !Task.isCancelled else { return }
-            guard !isImmersive, !isLandscape, player.isPlaying else { continue }
+            guard isActive, !isImmersive, !isLandscape, player.isPlaying else { continue }
             if Date().timeIntervalSince(interaction.last) >= 10 {
                 withAnimation(.easeInOut(duration: 0.35)) { isImmersive = true }
             }
