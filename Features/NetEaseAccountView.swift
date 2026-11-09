@@ -21,7 +21,7 @@ struct NetEaseAccountView: View {
             }
         }
         .scrollContentBackground(.hidden)
-        .background(Color.clear)
+        .background { AppBackgroundView() }
         .navigationTitle("网易云账号")
         .navigationBarTitleDisplayMode(.inline)
         .alert("提示", isPresented: $showMessage) {

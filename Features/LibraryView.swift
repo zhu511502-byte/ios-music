@@ -49,7 +49,7 @@ struct LibraryView: View {
                 }
             }
             .scrollContentBackground(.hidden)
-            .background(Color.clear)
+            .background { AppBackgroundView() }
             .navigationTitle("音乐库")
             .navigationDestination(for: String.self) { playlistID in
                 PlaylistDetailView(playlistID: playlistID)
@@ -113,7 +113,7 @@ struct PlaylistDetailView: View {
             }
         }
         .scrollContentBackground(.hidden)
-        .background(Color.clear)
+        .background { AppBackgroundView() }
         .navigationTitle(title)
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {

@@ -44,7 +44,7 @@ struct SearchView: View {
                 }
                 content
             }
-            .background(Color.clear)
+            .background { AppBackgroundView() }
             .navigationTitle("搜索")
             .sheet(item: $trackToAdd) { track in
                 PlaylistPickerSheet(track: track)

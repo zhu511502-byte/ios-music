@@ -8,6 +8,7 @@ struct PlayerView: View {
 
     @State private var showLyrics = false
     @State private var showAddToPlaylist = false
+    @State private var autoPresentedLandscape = false
 
     private var artworkSize: CGFloat {
         min(360, max(220, UIScreen.main.bounds.width - 48))
@@ -24,6 +25,24 @@ struct PlayerView: View {
     }
 
     var body: some View {
+        GeometryReader { geometry in
+            playerContent
+                .onAppear { updateOrientation(geometry.size) }
+                .onChange(of: geometry.size) { updateOrientation($0) }
+        }
+        .fullScreenCover(isPresented: $showLyrics) {
+            LyricsView()
+                .environmentObject(player)
+        }
+        .sheet(isPresented: $showAddToPlaylist) {
+            if let track = player.currentTrack {
+                PlaylistPickerSheet(track: track)
+                    .environmentObject(library)
+            }
+        }
+    }
+
+    private var playerContent: some View {
         ZStack {
             background
             VStack(spacing: 0) {
@@ -82,15 +101,20 @@ struct PlayerView: View {
                 }
             }
         }
-        .fullScreenCover(isPresented: $showLyrics) {
-            LyricsView()
-                .environmentObject(player)
+    }
+
+    /// In landscape the player has no useful portrait layout, so mirror
+    /// kunyin's adaptive player and slide straight into the lyric view.
+    private func updateOrientation(_ size: CGSize) {
+        let landscape = size.width > size.height
+        guard landscape else {
+            autoPresentedLandscape = false
+            return
         }
-        .sheet(isPresented: $showAddToPlaylist) {
-            if let track = player.currentTrack {
-                PlaylistPickerSheet(track: track)
-                    .environmentObject(library)
-            }
+        guard !autoPresentedLandscape, !showLyrics else { return }
+        autoPresentedLandscape = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+            showLyrics = true
         }
     }
 

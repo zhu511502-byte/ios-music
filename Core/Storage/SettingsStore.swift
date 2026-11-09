@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import SwiftUI
 import UIKit
 
 @MainActor
@@ -45,6 +46,15 @@ final class SettingsStore: ObservableObject {
             defaults.synchronize()
         }
     }
+    /// Accent colour (hex string) used across the app.
+    @Published var themeColorHex: String {
+        didSet {
+            defaults.set(themeColorHex, forKey: Keys.themeColorHex)
+            ThemeStore.shared.apply(hex: themeColorHex)
+        }
+    }
+    var accentColor: Color { ThemeStore.shared.accent }
+
     @Published var authCode: String = "" {
         didSet {
             if authCode.isEmpty {
@@ -68,6 +78,7 @@ final class SettingsStore: ObservableObject {
         static let backgroundOpacity = "settings.backgroundOpacity"
         static let karaokeLyrics = "settings.karaokeLyrics"
         static let autoSync = "settings.autoSync"
+        static let themeColorHex = "settings.themeColorHex"
     }
 
     private static var backgroundImageFile: URL {
@@ -103,6 +114,12 @@ final class SettingsStore: ObservableObject {
            let code = String(data: data, encoding: .utf8) {
             authCode = code
         }
+        themeColorHex = defaults.string(forKey: Keys.themeColorHex) ?? "#F54D73"
+        ThemeStore.shared.apply(hex: themeColorHex)
+    }
+
+    func setThemeColor(_ color: Color) {
+        themeColorHex = UIColor(color).hexString
     }
 
     var hasCustomBackground: Bool { backgroundImage != nil }

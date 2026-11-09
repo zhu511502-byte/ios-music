@@ -4,7 +4,7 @@ import UIKit
 enum AppTheme {
     static let background = Color(red: 0.055, green: 0.055, blue: 0.075)
     static let card = Color(red: 0.10, green: 0.10, blue: 0.13)
-    static let accent = Color(red: 0.96, green: 0.30, blue: 0.45)
+    static var accent: Color { ThemeStore.shared.accent }
     static let secondaryText = Color.white.opacity(0.58)
 }
 
@@ -321,7 +321,7 @@ struct CoverMeshBackground: View {
                 }
             }
 
-            TimelineView(.animation(minimumInterval: 1.0 / 20.0)) { context in
+            TimelineView(.periodic(from: .now, by: 0.2)) { context in
                 let t = context.date.timeIntervalSinceReferenceDate
                 GeometryReader { geometry in
                     let w = max(geometry.size.width, 1)
@@ -347,7 +347,6 @@ struct CoverMeshBackground: View {
                                     x: CGFloat(sin(t * (0.11 + Double(index) * 0.017) + Double(index) * 1.7)) * w * 0.26,
                                     y: CGFloat(cos(t * (0.09 + Double(index) * 0.013) + Double(index) * 0.9)) * h * 0.20
                                 )
-                                .blur(radius: 58)
                         }
                     }
                     .blendMode(.screen)

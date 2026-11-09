@@ -45,7 +45,7 @@ struct DiscoverView: View {
                 sourcePicker
                 content
             }
-            .background(Color.clear)
+            .background { AppBackgroundView() }
             .navigationTitle("发现")
             .task { load() }
         }
@@ -247,7 +247,7 @@ private struct OnlineTrackListPage: View {
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
-        .background(Color.clear)
+        .background { AppBackgroundView() }
         .navigationTitle(title)
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {

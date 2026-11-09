@@ -36,6 +36,7 @@ struct RootView: View {
                 .tag(3)
         }
         .tint(AppTheme.accent)
+        .id(settings.themeColorHex)
         .background(Color.clear)
         .task {
             await model.start()
@@ -51,20 +52,17 @@ struct RootView: View {
         }
     }
 
-    /// The backdrop has to live inside each tab. A `.background` on the
-    /// TabView sits behind UITabBarController's own opaque view, which is why
-    /// a custom photo previously never showed up on the main screens.
+    /// Each screen paints `AppBackgroundView` inside its own NavigationStack.
+    /// A `.background` on the TabView sits behind UITabBarController's opaque
+    /// view, and a background outside NavigationStack can be hidden by its
+    /// hosting controller — both were why the custom photo never appeared.
     private func tab<Content: View>(_ content: Content) -> some View {
-        ZStack {
-            AppBackgroundView()
-            content
-                .safeAreaInset(edge: .bottom, spacing: 0) {
-                    if player.currentTrack != nil {
-                        MiniPlayerView { showPlayer = true }
-                            .padding(.horizontal, 10)
-                            .padding(.bottom, 4)
-                    }
-                }
+        content.safeAreaInset(edge: .bottom, spacing: 0) {
+            if player.currentTrack != nil {
+                MiniPlayerView { showPlayer = true }
+                    .padding(.horizontal, 10)
+                    .padding(.bottom, 4)
+            }
         }
     }
 

@@ -34,7 +34,7 @@ struct SettingsView: View {
                 aboutSection
             }
             .scrollContentBackground(.hidden)
-            .background(Color.clear)
+            .background { AppBackgroundView() }
             .navigationTitle("设置")
             .fileImporter(isPresented: $showSourceImporter, allowedContentTypes: [jsType], allowsMultipleSelection: false) { result in
                 handleSourceImport(result)
@@ -215,6 +215,44 @@ struct SettingsView: View {
 
     private var appearanceSection: some View {
         Section {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Text("主题色")
+                    Spacer()
+                    ColorPicker(
+                        "",
+                        selection: Binding(
+                            get: { settings.accentColor },
+                            set: { settings.setThemeColor($0) }
+                        ),
+                        supportsOpacity: false
+                    )
+                    .labelsHidden()
+                }
+
+                HStack(spacing: 13) {
+                    ForEach(ThemeSwatch.presets) { swatch in
+                        Button {
+                            settings.setThemeColor(swatch.color)
+                        } label: {
+                            Circle()
+                                .fill(swatch.color)
+                                .frame(width: 27, height: 27)
+                                .overlay(
+                                    Circle()
+                                        .stroke(Color.white.opacity(settings.themeColorHex == swatch.hex ? 0.95 : 0), lineWidth: 2)
+                                )
+                                .overlay(
+                                    Circle()
+                                        .stroke(Color.white.opacity(0.16), lineWidth: 0.5)
+                                )
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(swatch.name)
+                    }
+                }
+            }
+
             if let image = settings.backgroundImage {
                 Image(uiImage: image)
                     .resizable()

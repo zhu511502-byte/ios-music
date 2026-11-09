@@ -12,7 +12,7 @@ import Foundation
 /// of the old implementation.
 struct LyricsViewportView: View {
     let lyrics: Lyrics
-    @ObservedObject var clock: PlaybackClock
+    let clock: PlaybackClock
     let lyricsClock: LyricsClock
     let activeSize: CGFloat
     let inactiveSize: CGFloat
@@ -37,8 +37,8 @@ struct LyricsViewportView: View {
 
     private let anchorFraction: CGFloat = 0.44
 
-    private var currentIndex: Int? {
-        lyrics.lines.lastIndex { ($0.time ?? -1) <= clock.time + 0.05 }
+    private func index(at time: Double) -> Int? {
+        lyrics.lines.lastIndex { ($0.time ?? -1) <= time + 0.05 }
     }
 
     var body: some View {
@@ -69,19 +69,12 @@ struct LyricsViewportView: View {
                 rebuild(width: newSize.width, height: newSize.height, animated: false)
             }
             .onChange(of: lyrics) { _ in
-                activeIndex = currentIndex ?? 0
+                activeIndex = index(at: clock.time) ?? 0
                 scrollDirection = 0
                 rebuild(width: geometry.size.width, height: geometry.size.height, animated: false)
             }
-            .onChange(of: currentIndex) { newValue in
-                guard let newValue else { return }
-                let previous = activeIndex
-                activeIndex = newValue
-                if let previous, previous != newValue {
-                    scrollDirection = newValue > previous ? 1 : -1
-                }
-                guard !isDragging, Date() >= resumeFollowAt else { return }
-                recenter(animated: true)
+            .onReceive(clock.$time) { time in
+                updateActiveIndex(time)
             }
             .onChange(of: isImmersive) { _ in
                 // Header/footer are overlays, so the viewport itself never
@@ -100,7 +93,6 @@ struct LyricsViewportView: View {
         let isActive = index == activeIndex
         let isPlayed = (activeIndex ?? 0) > index
         let scale: CGFloat = isActive ? 1 : 0.94 + 0.05 * CGFloat(gaussian)
-        let blur: CGFloat = isActive ? 0 : 0.9 * CGFloat(1 - gaussian)
         let opacity = isActive ? 1.0 : (isPlayed ? 0.44 : 0.56) * (0.86 + 0.14 * gaussian)
 
         Button {
@@ -124,7 +116,6 @@ struct LyricsViewportView: View {
             }
             .opacity(opacity)
             .scaleEffect(scale, anchor: .leading)
-            .blur(radius: blur)
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
         }
@@ -184,6 +175,18 @@ struct LyricsViewportView: View {
         return base.delay(max(0, delay))
     }
 
+    private func updateActiveIndex(_ time: Double) {
+        guard let next = index(at: time) else { return }
+        let previous = activeIndex
+        guard previous != next else { return }
+        activeIndex = next
+        if let previous {
+            scrollDirection = next > previous ? 1 : -1
+        }
+        guard !isDragging, Date() >= resumeFollowAt else { return }
+        recenter(animated: true)
+    }
+
     private func recenter(animated: Bool) {
         guard let index = activeIndex,
               tops.indices.contains(index),
@@ -231,7 +234,7 @@ struct LyricsViewportView: View {
         viewportWidth = width
         viewportHeight = height
         if activeIndex == nil {
-            activeIndex = currentIndex ?? 0
+            activeIndex = index(at: clock.time) ?? 0
         }
         guard let index = activeIndex, newTops.indices.contains(index) else { return }
         let target = height * anchorFraction - (newTops[index] + newHeights[index] / 2)
@@ -323,6 +326,9 @@ private struct KaraokeLyricLine: View {
             let fit = totalWidth > 0 ? min(1, width / totalWidth) : 1
             let fitted = max(fontSize * 0.72, fontSize * fit)
             let fill = fillFraction
+            let displayWidth = totalWidth * (fitted / fontSize)
+            let filled = displayWidth * CGFloat(fill)
+            let feather = min(14, filled)
 
             ZStack(alignment: .leading) {
                 Text(line.text)
@@ -335,23 +341,18 @@ private struct KaraokeLyricLine: View {
                     .foregroundStyle(.white)
                     .lineLimit(1)
                     .mask(alignment: .leading) {
-                        GeometryReader { proxy in
-                            let total = proxy.size.width
-                            let filled = total * CGFloat(fill)
-                            let feather = min(14, filled)
-                            HStack(spacing: 0) {
-                                Rectangle()
-                                    .fill(Color.white)
-                                    .frame(width: max(0, filled - feather))
-                                LinearGradient(
-                                    colors: [.white, .clear],
-                                    startPoint: .leading,
-                                    endPoint: .trailing
-                                )
-                                .frame(width: feather)
-                            }
-                            .frame(width: filled, alignment: .leading)
+                        HStack(spacing: 0) {
+                            Rectangle()
+                                .fill(Color.white)
+                                .frame(width: max(0, filled - feather))
+                            LinearGradient(
+                                colors: [.white, .clear],
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
+                            .frame(width: feather)
                         }
+                        .frame(maxHeight: .infinity)
                     }
                     .animation(.linear(duration: 0.08), value: fill)
             }
