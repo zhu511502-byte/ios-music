@@ -157,8 +157,11 @@ struct LyricsView: View {
                 player.seek(to: value)
             }
 
+            QualityMenuView()
+                .padding(.top, -1)
+
             transportRow
-                .padding(.top, 10)
+                .padding(.top, 8)
 
             volumeRow
                 .padding(.top, 8)
@@ -176,6 +179,9 @@ struct LyricsView: View {
             LyricsProgressRow(clock: player.clock, duration: player.duration) { value in
                 player.seek(to: value)
             }
+
+            QualityMenuView()
+                .padding(.top, -1)
 
             transportRow
 
@@ -738,17 +744,13 @@ private struct LyricsProgressRow: View {
             }
             .frame(height: 13)
 
-            ZStack {
-                HStack {
-                    Text(timeText(displayedTime))
-                    Spacer()
-                    Text("-" + timeText(max(0, duration - displayedTime)))
-                }
-                .font(.caption2.monospacedDigit())
-                .foregroundStyle(.white.opacity(0.48))
-
-                QualityMenuView()
+            HStack {
+                Text(timeText(displayedTime))
+                Spacer()
+                Text("-" + timeText(max(0, duration - displayedTime)))
             }
+            .font(.caption2.monospacedDigit())
+            .foregroundStyle(.white.opacity(0.48))
         }
     }
 
