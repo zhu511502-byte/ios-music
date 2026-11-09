@@ -112,7 +112,7 @@ struct LyricsView: View {
 
     private var portraitHeader: some View {
         HStack(alignment: .center, spacing: 12) {
-            Button { close() } label: {
+            Button { closeLyrics() } label: {
                 Image(systemName: "chevron.down")
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundStyle(.white)
@@ -150,7 +150,7 @@ struct LyricsView: View {
 
         return VStack(alignment: .leading, spacing: 0) {
             HStack {
-                Button { close() } label: {
+                Button { closeLyrics() } label: {
                     Image(systemName: "chevron.down")
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundStyle(.white)
@@ -490,6 +490,14 @@ struct LyricsView: View {
             .ignoresSafeArea()
         }
         .ignoresSafeArea()
+    }
+
+    private func closeLyrics() {
+        if let onClose {
+            onClose()
+        } else {
+            dismiss()
+        }
     }
 
     // MARK: - Auto immersive
