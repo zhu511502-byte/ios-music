@@ -684,19 +684,20 @@ private struct KaraokeLineView: View {
 
     var body: some View {
         Canvas { context, size in
-            let base = Text(line.text)
+            let text = Text(line.text)
                 .font(.system(size: fontSize, weight: .bold))
                 .lineLimit(1)
-            let dim = context.resolve(base.foregroundColor(.white.opacity(0.30)))
-            let bright = context.resolve(base.foregroundColor(.white))
-            let measured = dim.measure(in: size)
+            let resolved = context.resolve(text)
+            let measured = resolved.measure(in: size)
 
-            context.draw(dim, at: .zero, anchor: .topLeading)
+            var dimmed = context
+            dimmed.opacity = 0.30
+            dimmed.draw(resolved, at: .zero, anchor: .topLeading)
 
             var highlighted = context
             let width = max(0, measured.width * fillProgress)
             highlighted.clip(to: Path(CGRect(x: 0, y: 0, width: width, height: max(size.height, measured.height))))
-            highlighted.draw(bright, at: .zero, anchor: .topLeading)
+            highlighted.draw(resolved, at: .zero, anchor: .topLeading)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .frame(height: fontSize * 1.55)
