@@ -190,12 +190,20 @@ struct LyricsViewportView: View {
               heights.indices.contains(index),
               viewportHeight > 0 else { return }
         let target = viewportHeight * anchorFraction - (tops[index] + heights[index] / 2)
+        setOffset(target, animated: animated)
+    }
+
+    private func setOffset(_ target: CGFloat, animated: Bool) {
         if animated {
             withAnimation(.timingCurve(0.22, 0.61, 0.36, 1, duration: 0.5)) {
                 offset = target
             }
         } else {
-            offset = target
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                offset = target
+            }
         }
     }
 
@@ -227,13 +235,7 @@ struct LyricsViewportView: View {
         }
         guard let index = activeIndex, newTops.indices.contains(index) else { return }
         let target = height * anchorFraction - (newTops[index] + newHeights[index] / 2)
-        if animated {
-            withAnimation(.timingCurve(0.22, 0.61, 0.36, 1, duration: 0.5)) {
-                offset = target
-            }
-        } else {
-            offset = target
-        }
+        setOffset(target, animated: animated)
     }
 
     private static func lineHeight(for line: LyricLine, width: CGFloat, fontSize: CGFloat) -> CGFloat {
