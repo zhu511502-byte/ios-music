@@ -42,6 +42,16 @@ final class NativeMusicAPI: ObservableObject, @unchecked Sendable {
 
     // MARK: - Public API
 
+    /// Hot search keywords for the search landing page. QQ uses the same
+    /// `HotkeyService` endpoint as kunyin; other sources currently expose
+    /// hot songs through `rankList`.
+    func hotSearchKeywords(source: String) async throws -> [String] {
+        switch source {
+        case "tx": return try await hotSearchTX()
+        default: return []
+        }
+    }
+
     func search(source: String, query: String, page: Int = 1, limit: Int = 25) async throws -> OnlinePage {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return .empty }

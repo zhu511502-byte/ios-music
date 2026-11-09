@@ -138,6 +138,7 @@ enum KRCParser {
 
             var text = ""
             var offsets: [Double] = []
+            var syllables: [LyricSyllable] = []
             for word in words {
                 let offsetMs = Double(bodyNS.substring(with: word.range(at: 1))) ?? 0
                 let wordDurationMs = Double(bodyNS.substring(with: word.range(at: 2))) ?? 0
@@ -149,6 +150,10 @@ enum KRCParser {
                     offsets.append(start + Double(index) / Double(max(characters.count, 1)) * duration)
                 }
                 text += wordText
+                let tokenText = MusicParse.htmlDecode(wordText)
+                if !tokenText.isEmpty {
+                    syllables.append(LyricSyllable(text: tokenText, start: start, end: start + duration))
+                }
             }
 
             let clean = MusicParse.htmlDecode(text.trimmingCharacters(in: .whitespaces))
@@ -158,12 +163,15 @@ enum KRCParser {
             let usedOffsets = offsets.count == characters.count
                 ? offsets
                 : redistribute(characters, start: startMs / 1000, duration: durationMs / 1000)
+            let joinedTokens = syllables.map(\.text).joined()
+            let usedSyllables = joinedTokens == clean ? syllables : []
             lines.append(LyricLine(
                 id: lines.count,
                 time: startMs / 1000,
                 text: clean,
                 wordTimes: usedOffsets,
-                endTime: (startMs + durationMs) / 1000
+                endTime: (startMs + durationMs) / 1000,
+                syllables: usedSyllables
             ))
         }
 

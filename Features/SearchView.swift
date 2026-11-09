@@ -27,6 +27,7 @@ struct SearchView: View {
     @State private var errorMessage: String?
     @State private var trackToAdd: MusicInfo?
     @State private var hotSongs: [MusicInfo] = []
+    @State private var hotKeywords: [String] = []
     @State private var isLoadingHot = false
     @AppStorage("search.history") private var historyRaw = ""
 
@@ -197,7 +198,26 @@ struct SearchView: View {
                         }
                     }
 
-                    if hotSongs.isEmpty {
+                    if source == "tx", !hotKeywords.isEmpty {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 8) {
+                                ForEach(hotKeywords, id: \.self) { keyword in
+                                    Button {
+                                        query = keyword
+                                        search()
+                                    } label: {
+                                        Text(keyword)
+                                            .font(.footnote.weight(.medium))
+                                            .foregroundStyle(.white.opacity(0.88))
+                                            .padding(.horizontal, 12)
+                                            .frame(height: 30)
+                                            .background(AppTheme.card, in: Capsule())
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                        }
+                    } else if hotSongs.isEmpty {
                         Text(isLoadingHot ? "正在加载热门歌曲…" : "暂无热门歌曲")
                             .font(.caption)
                             .foregroundStyle(AppTheme.secondaryText)
@@ -237,6 +257,18 @@ struct SearchView: View {
     }
 
     private func loadHotSongs() async {
+        if source == "tx" {
+            await MainActor.run { isLoadingHot = true }
+            if let keywords = try? await music.hotSearchKeywords(source: "tx"), !keywords.isEmpty {
+                await MainActor.run {
+                    hotKeywords = keywords
+                    hotSongs = []
+                    isLoadingHot = false
+                }
+                return
+            }
+        }
+        await MainActor.run { hotKeywords = [] }
         let board: String
         switch source {
         case "tx": board = "26"

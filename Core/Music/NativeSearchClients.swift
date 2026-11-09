@@ -125,6 +125,38 @@ extension NativeMusicAPI {
 
     // MARK: - QQ Music
 
+    func hotSearchTX() async throws -> [String] {
+        let payload: [String: Any] = [
+            "comm": ["ct": "19", "cv": "1803", "uin": "0"],
+            "hotkey": [
+                "module": "tencent_musicsoso_hotkey.HotkeyService",
+                "method": "GetHotkeyForQQMusicPC",
+                "param": ["uin": 0, "search_id": ""]
+            ]
+        ]
+        let payloadData = try JSONSerialization.data(withJSONObject: payload)
+        let payloadText = String(data: payloadData, encoding: .utf8) ?? "{}"
+        let sign = MusicCrypto.zzcSign(payloadText)
+        guard let url = URL(string: "https://u.y.qq.com/cgi-bin/musics.fcg?sign=\(sign)") else {
+            throw MusicAPIError.badURL
+        }
+        let result = try await perform(url, method: "POST", headers: [
+            "User-Agent": "QQMusic 14090508(android 12)",
+            "Content-Type": "application/json"
+        ], body: payloadData)
+        guard (200..<300).contains(result.response.statusCode) else {
+            throw MusicAPIError.http(result.response.statusCode)
+        }
+        let body = try MusicParse.decode(result.data)
+        let hotkey = MusicParse.dictionary(body["hotkey"])
+        guard MusicParse.int(hotkey["code"]) == 0 else { return [] }
+        let data = MusicParse.dictionary(hotkey["data"])
+        return MusicParse.objects(data["vec_hotkey"]).compactMap { item in
+            let query = MusicParse.string(item["query"]).trimmingCharacters(in: .whitespacesAndNewlines)
+            return query.isEmpty ? nil : query
+        }
+    }
+
     func searchTX(_ query: String, page: Int, limit: Int) async throws -> OnlinePage {
         let payload: [String: Any] = [
             "comm": [

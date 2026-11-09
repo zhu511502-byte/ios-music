@@ -475,7 +475,9 @@ struct LyricsView: View {
                 .ignoresSafeArea()
             }
 
-            FlowingGlowView(intensity: 0.5)
+            if !isLandscape {
+                FlowingGlowView(intensity: 0.5)
+            }
 
             LinearGradient(
                 stops: [

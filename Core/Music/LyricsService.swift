@@ -1,5 +1,11 @@
 import Foundation
 
+struct LyricSyllable: Hashable, Sendable {
+    let text: String
+    let start: Double
+    let end: Double
+}
+
 struct LyricLine: Identifiable, Hashable, Sendable {
     let id: Int
     let time: Double?
@@ -9,15 +15,27 @@ struct LyricLine: Identifiable, Hashable, Sendable {
     var wordTimes: [Double] = []
     /// When the whole line finishes singing (karaoke), if known.
     var endTime: Double?
+    /// Original timed tokens from KRC/YRC/QRC. A token can be a single CJK
+    /// character or a whole Latin word, and carries its real start/end.
+    var syllables: [LyricSyllable] = []
 
     var hasWordTiming: Bool { !wordTimes.isEmpty && wordTimes.count == text.count }
+    var hasSyllableTiming: Bool { !syllables.isEmpty }
 
-    init(id: Int, time: Double?, text: String, wordTimes: [Double] = [], endTime: Double? = nil) {
+    init(
+        id: Int,
+        time: Double?,
+        text: String,
+        wordTimes: [Double] = [],
+        endTime: Double? = nil,
+        syllables: [LyricSyllable] = []
+    ) {
         self.id = id
         self.time = time
         self.text = text
         self.wordTimes = wordTimes
         self.endTime = endTime
+        self.syllables = syllables
     }
 }
 
@@ -483,12 +501,29 @@ enum LyricsParser {
             timed.sort { $0.time == $1.time ? $0.order < $1.order : $0.time < $1.time }
             let lines = timed.enumerated().map { index, item -> LyricLine in
                 let next = timed.indices.contains(index + 1) ? timed[index + 1].time : nil
+                let times = Self.wordTimings(for: item.text, start: item.time, end: next)
+                let characters = Array(item.text)
+                var syllables: [LyricSyllable] = []
+                if times.count == characters.count {
+                    for charIndex in characters.indices {
+                        let start = times[charIndex]
+                        let end = charIndex + 1 < times.count
+                            ? times[charIndex + 1]
+                            : (next ?? start + 0.35)
+                        syllables.append(LyricSyllable(
+                            text: String(characters[charIndex]),
+                            start: start,
+                            end: end
+                        ))
+                    }
+                }
                 return LyricLine(
                     id: index,
                     time: item.time,
                     text: item.text,
-                    wordTimes: Self.wordTimings(for: item.text, start: item.time, end: next),
-                    endTime: next
+                    wordTimes: times,
+                    endTime: next,
+                    syllables: syllables
                 )
             }
             return Lyrics(lines: lines, isSynced: true)
@@ -581,21 +616,25 @@ enum YRCParser {
 
             var text = ""
             var offsets: [Double] = []
+            var syllables: [LyricSyllable] = []
             for word in words {
                 let wordStartMs = Double(bodyNS.substring(with: word.range(at: 1))) ?? startMs
                 let wordDurationMs = Double(bodyNS.substring(with: word.range(at: 2))) ?? 0
                 let wordText = bodyNS.substring(with: word.range(at: 3))
 
-                // Expand the word into characters. The first character starts
-                // at the word's start time; the rest interpolate across the
-                // word duration so per-character highlight stays smooth even
-                // for multi-character tokens like "MV" or "EAS ".
+                // Keep the real token window. The per-character array is only
+                // a fallback for older renderers; the karaoke layer uses the
+                // token's exact start/end and measured width.
                 let characters = Array(wordText)
                 let wordStart = wordStartMs / 1000
                 let wordDuration = max(wordDurationMs / 1000, 0.001)
                 for (charIndex, _) in characters.enumerated() {
                     let fraction = Double(charIndex) / Double(max(characters.count, 1))
                     offsets.append(wordStart + fraction * wordDuration)
+                }
+                let tokenText = MusicParse.htmlDecode(wordText)
+                if !tokenText.isEmpty {
+                    syllables.append(LyricSyllable(text: tokenText, start: wordStart, end: wordStart + wordDuration))
                 }
                 text += wordText
             }
@@ -605,7 +644,14 @@ enum YRCParser {
             // yrc metadata header rows are `[0,0](...)`; real lyric lines have
             // a non-zero duration (a line at 0:00 is valid).
             guard durationMs > 0 else { continue }
-            items.append(Item(start: start, end: end, text: clean, offsets: offsets))
+            let joinedTokens = syllables.map(\.text).joined()
+            items.append(Item(
+                start: start,
+                end: end,
+                text: clean,
+                offsets: offsets,
+                syllables: joinedTokens == clean ? syllables : []
+            ))
         }
 
         guard items.count >= 2 else { return nil } // a real song has more than headers
@@ -636,12 +682,14 @@ enum YRCParser {
                     accumulated += weight
                 }
             }
+            let joinedTokens = item.syllables.map(\.text).joined()
             lines.append(LyricLine(
                 id: index,
                 time: item.start,
                 text: item.text,
                 wordTimes: times,
-                endTime: items.indices.contains(index + 1) ? items[index + 1].start : item.end
+                endTime: items.indices.contains(index + 1) ? items[index + 1].start : item.end,
+                syllables: joinedTokens == item.text ? item.syllables : []
             ))
         }
 

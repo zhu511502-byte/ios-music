@@ -45,6 +45,7 @@ final class KaraokeTextLayerUIView: UIView {
 
     private var charOffsets: [CGFloat] = []
     private var times: [Double] = []
+    private var tokenRanges: [(startX: CGFloat, endX: CGFloat, start: Double, end: Double)] = []
     private var lineStart: Double = 0
     private var lineEnd: Double = 0
 
@@ -206,6 +207,7 @@ final class KaraokeTextLayerUIView: UIView {
         let ctLine = CTLineCreateWithAttributedString(highlight)
 
         charOffsets = [0]
+        tokenRanges = []
         var utf16Index = 0
         for character in line.text {
             utf16Index += String(character).utf16.count
@@ -215,6 +217,25 @@ final class KaraokeTextLayerUIView: UIView {
         let totalWidth = CGFloat(CTLineGetTypographicBounds(ctLine, nil, nil, nil))
         if !charOffsets.isEmpty {
             charOffsets[charOffsets.count - 1] = totalWidth
+        }
+
+        // Preserve KRC/YRC/QRC token boundaries. A token can be a whole
+        // English word; using its real start/end is more accurate than
+        // inventing per-character times.
+        if !line.syllables.isEmpty, line.syllables.map(\.text).joined() == line.text {
+            var tokenX: CGFloat = 0
+            var tokenIndex = 0
+            for syllable in line.syllables {
+                tokenIndex += syllable.text.utf16.count
+                let endX = CGFloat(CTLineGetOffsetForStringIndex(ctLine, tokenIndex, nil))
+                tokenRanges.append((tokenX, endX, syllable.start, syllable.end))
+                tokenX = endX
+            }
+            if let last = tokenRanges.last {
+                tokenRanges[tokenRanges.count - 1] = (
+                    last.startX, max(last.endX, totalWidth), last.start, last.end
+                )
+            }
         }
 
         times = effectiveTimes(for: line)
@@ -243,30 +264,50 @@ final class KaraokeTextLayerUIView: UIView {
     }
 
     private func updateMask(at time: Double) {
-        guard !charOffsets.isEmpty, charOffsets.count == times.count + 1 else {
-            maskLayer.opacity = 0
-            return
-        }
-
         let x: CGFloat
-        if time <= lineStart {
-            x = 0
-        } else {
-            var result = charOffsets.last ?? 0
-            for index in times.indices {
-                let start = times[index]
-                let end = index + 1 < times.count ? times[index + 1] : lineEnd
-                if time >= end { continue }
-                if time > start {
-                    let span = max(end - start, 0.06)
-                    let progress = min(max((time - start) / span, 0), 1)
-                    result = charOffsets[index] + (charOffsets[index + 1] - charOffsets[index]) * CGFloat(progress)
-                } else {
-                    result = charOffsets[index]
+
+        if !tokenRanges.isEmpty {
+            if time <= lineStart {
+                x = 0
+            } else {
+                var result = tokenRanges.last?.endX ?? 0
+                for token in tokenRanges {
+                    if time >= token.end { continue }
+                    if time > token.start {
+                        let span = max(token.end - token.start, 0.06)
+                        let progress = min(max((time - token.start) / span, 0), 1)
+                        result = token.startX + (token.endX - token.startX) * CGFloat(progress)
+                    } else {
+                        result = token.startX
+                    }
+                    break
                 }
-                break
+                x = result
             }
-            x = result
+        } else {
+            guard !charOffsets.isEmpty, charOffsets.count == times.count + 1 else {
+                maskLayer.opacity = 0
+                return
+            }
+            if time <= lineStart {
+                x = 0
+            } else {
+                var result = charOffsets.last ?? 0
+                for index in times.indices {
+                    let start = times[index]
+                    let end = index + 1 < times.count ? times[index + 1] : lineEnd
+                    if time >= end { continue }
+                    if time > start {
+                        let span = max(end - start, 0.06)
+                        let progress = min(max((time - start) / span, 0), 1)
+                        result = charOffsets[index] + (charOffsets[index + 1] - charOffsets[index]) * CGFloat(progress)
+                    } else {
+                        result = charOffsets[index]
+                    }
+                    break
+                }
+                x = result
+            }
         }
 
         CATransaction.begin()
