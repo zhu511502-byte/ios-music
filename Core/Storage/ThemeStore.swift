@@ -4,10 +4,10 @@ import UIKit
 /// Holds the user-selected accent colour. `AppTheme.accent` reads from here so
 /// every existing call site picks up the change without threading another
 /// environment object through the whole app.
-final class ThemeStore {
+final class ThemeStore: ObservableObject {
     static let shared = ThemeStore()
 
-    private(set) var accent: Color = Color(hex: "#F54D73")
+    @Published private(set) var accent: Color = Color(hex: "#F54D73")
 
     private init() {}
 

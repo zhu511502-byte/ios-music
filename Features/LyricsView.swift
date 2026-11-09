@@ -6,6 +6,7 @@ struct LyricsView: View {
     @EnvironmentObject private var player: PlaybackCoordinator
     @EnvironmentObject private var settings: SettingsStore
     @EnvironmentObject private var library: LibraryStore
+    @EnvironmentObject private var theme: ThemeStore
     @Environment(\.dismiss) private var dismiss
 
     @State private var lyrics: Lyrics?

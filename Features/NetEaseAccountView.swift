@@ -6,6 +6,7 @@ import CoreImage.CIFilterBuiltins
 struct NetEaseAccountView: View {
     @EnvironmentObject private var account: NetEaseAccount
     @EnvironmentObject private var library: LibraryStore
+    @EnvironmentObject private var theme: ThemeStore
     @State private var message: String?
     @State private var showMessage = false
     @State private var phone = ""

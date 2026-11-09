@@ -11,6 +11,7 @@ struct SettingsView: View {
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var sync: SyncClient
     @EnvironmentObject private var netease: NetEaseAccount
+    @EnvironmentObject private var theme: ThemeStore
 
     @State private var showSourceImporter = false
     @State private var showSourceURLImporter = false

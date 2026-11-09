@@ -3,6 +3,7 @@ import SwiftUI
 struct LibraryView: View {
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var player: PlaybackCoordinator
+    @EnvironmentObject private var theme: ThemeStore
     @State private var showCreate = false
     @State private var newListName = ""
 

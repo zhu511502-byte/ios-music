@@ -36,7 +36,6 @@ struct RootView: View {
                 .tag(3)
         }
         .tint(AppTheme.accent)
-        .id(settings.themeColorHex)
         .background(Color.clear)
         .task {
             await model.start()

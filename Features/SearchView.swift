@@ -5,6 +5,7 @@ struct SearchView: View {
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var player: PlaybackCoordinator
     @EnvironmentObject private var sourceStore: SourceStore
+    @EnvironmentObject private var theme: ThemeStore
 
     private struct SearchSource: Identifiable {
         let id: String

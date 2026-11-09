@@ -2,6 +2,7 @@ import SwiftUI
 
 struct DiscoverView: View {
     @EnvironmentObject private var music: NativeMusicAPI
+    @EnvironmentObject private var theme: ThemeStore
 
     private struct SourceOption: Identifiable {
         let id: String
