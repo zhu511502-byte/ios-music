@@ -138,7 +138,7 @@ struct FlowingGlowView: View {
                     Circle()
                         .fill(
                             RadialGradient(
-                                colors: [Color(red: 1.0, green: 0.42, blue: 0.38).opacity(0.16), .clear],
+                                colors: [AppTheme.accent.opacity(0.18), .clear],
                                 center: .center,
                                 startRadius: 0,
                                 endRadius: w * 0.38

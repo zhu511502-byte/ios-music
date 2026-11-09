@@ -130,8 +130,8 @@ struct LyricsViewportView: View {
         guard tops.count == lyrics.lines.count, heights.count == lyrics.lines.count else {
             return Array(lyrics.lines.indices)
         }
-        let topEdge = -offset - 600
-        let bottomEdge = -offset + viewportHeight + 600
+        let topEdge = -offset - 200
+        let bottomEdge = -offset + viewportHeight + 200
         var result: [Int] = []
         for index in lyrics.lines.indices {
             let lineTop = tops[index]
