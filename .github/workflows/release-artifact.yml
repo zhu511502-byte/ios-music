@@ -1,0 +1,32 @@
+name: Publish IPA Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: Build workflow run id
+        required: true
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download IPA artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: LxPlayer-unsigned-ipa
+          run-id: ${{ inputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: dist
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ inputs.run_id }}
+          name: LxPlayer build ${{ inputs.run_id }}
+          files: dist/LxPlayer-unsigned.ipa
+          make_latest: true
