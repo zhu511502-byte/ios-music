@@ -110,6 +110,8 @@ final class HeroTransitionCoordinator: ObservableObject {
     @Published private(set) var panelTo: CGRect = .zero
     @Published private(set) var panelCornerFrom: CGFloat = 24
     @Published private(set) var panelCornerTo: CGFloat = 0
+    @Published private(set) var panelBackdropFrom: Double = 0.06
+    @Published private(set) var panelBackdropTo: Double = 1.0
     @Published private(set) var panelOpacity = 1.0
 
     @Published private(set) var heroVisible = false
@@ -166,6 +168,8 @@ final class HeroTransitionCoordinator: ObservableObject {
         panelTo = screenBounds
         panelCornerFrom = 24
         panelCornerTo = 0
+        panelBackdropFrom = 0.06
+        panelBackdropTo = 1.0
         panelOpacity = 1
         panelVisible = true
 
@@ -204,11 +208,11 @@ final class HeroTransitionCoordinator: ObservableObject {
         // final progress value.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) { [weak self] in
             guard let self, self.pending == .openPlayer else { return }
-            withAnimation(.easeInOut(duration: 0.52)) {
+            withAnimation(.timingCurve(0.16, 0.82, 0.24, 1.0, duration: 0.38)) {
                 self.progress = 1
             }
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.56) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.42) { [weak self] in
             self?.finishOpenPlayer()
         }
     }
@@ -244,6 +248,8 @@ final class HeroTransitionCoordinator: ObservableObject {
         panelTo = frame(.miniCapsule, fallback: fallbackMiniCapsule)
         panelCornerFrom = 0
         panelCornerTo = 24
+        panelBackdropFrom = 1.0
+        panelBackdropTo = 0.06
         panelOpacity = 1
         panelVisible = true
 
@@ -255,11 +261,11 @@ final class HeroTransitionCoordinator: ObservableObject {
         armWatchdog()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) { [weak self] in
             guard let self, self.pending == .closePlayer else { return }
-            withAnimation(.easeInOut(duration: 0.50)) {
+            withAnimation(.timingCurve(0.16, 0.82, 0.24, 1.0, duration: 0.36)) {
                 self.progress = 1
             }
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.54) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.40) { [weak self] in
             self?.finishClosePlayer()
         }
     }
@@ -321,14 +327,14 @@ final class HeroTransitionCoordinator: ObservableObject {
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) { [weak self] in
             guard let self, self.pending == .openLyrics else { return }
-            withAnimation(.easeInOut(duration: 0.46)) {
+            withAnimation(.timingCurve(0.16, 0.82, 0.24, 1.0, duration: 0.34)) {
                 self.progress = 1
             }
-            withAnimation(.easeInOut(duration: 0.38)) {
+            withAnimation(.easeOut(duration: 0.28)) {
                 self.lyricsBackgroundOpacity = 1
             }
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.50) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.38) { [weak self] in
             self?.finishOpenLyrics()
         }
     }
@@ -375,20 +381,20 @@ final class HeroTransitionCoordinator: ObservableObject {
         armWatchdog()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) { [weak self] in
             guard let self, self.pending == .closeLyrics else { return }
-            withAnimation(.easeInOut(duration: 0.46)) {
+            withAnimation(.timingCurve(0.16, 0.82, 0.24, 1.0, duration: 0.34)) {
                 self.progress = 1
             }
-            withAnimation(.easeInOut(duration: 0.36)) {
+            withAnimation(.easeOut(duration: 0.30)) {
                 self.lyricsBackgroundOpacity = 0
             }
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.34) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.24) { [weak self] in
             guard let self, self.pending == .closeLyrics else { return }
-            withAnimation(.easeOut(duration: 0.14)) {
+            withAnimation(.easeOut(duration: 0.12)) {
                 self.playerContentOpacity = 1
             }
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.50) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.38) { [weak self] in
             self?.finishCloseLyrics()
         }
     }
@@ -630,6 +636,8 @@ struct HeroPanelView: View {
                 to: hero.panelTo,
                 cornerFrom: hero.panelCornerFrom,
                 cornerTo: hero.panelCornerTo,
+                backdropFrom: hero.panelBackdropFrom,
+                backdropTo: hero.panelBackdropTo,
                 track: hero.heroTrack
             )
             .opacity(hero.panelOpacity)
@@ -645,6 +653,8 @@ private struct HeroPanelVisual: View, Animatable {
     let to: CGRect
     let cornerFrom: CGFloat
     let cornerTo: CGFloat
+    let backdropFrom: Double
+    let backdropTo: Double
     let track: MusicInfo?
 
     var animatableData: CGFloat {
@@ -665,6 +675,7 @@ private struct HeroPanelVisual: View, Animatable {
         )
         let radius = lerp(cornerFrom, cornerTo)
         let p = min(max(progress, 0), 1)
+        let backdropOpacity = backdropFrom + (backdropTo - backdropFrom) * Double(p)
 
         ZStack {
             ZStack {
@@ -672,7 +683,7 @@ private struct HeroPanelVisual: View, Animatable {
                     .fill(.ultraThinMaterial)
 
                 PlayerBackdrop(url: track?.picURL)
-                    .opacity(Double(0.16 + 0.84 * p))
+                    .opacity(backdropOpacity)
             }
             .frame(width: max(frame.width, 1), height: max(frame.height, 1))
             .clipShape(RoundedRectangle(cornerRadius: max(radius, 0), style: .continuous))

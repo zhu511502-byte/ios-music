@@ -30,6 +30,7 @@ struct LyricsView: View {
             ZStack {
                 background
                     .opacity(hero.lyricsBackgroundOpacity)
+                    .scaleEffect(1.0 + 0.03 * CGFloat(1.0 - hero.lyricsBackgroundOpacity))
 
                 Group {
                     if landscape {
