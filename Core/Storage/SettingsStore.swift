@@ -3,6 +3,31 @@ import Combine
 import SwiftUI
 import UIKit
 
+enum AppAppearance: String, CaseIterable, Identifiable {
+    case system
+    case light
+    case dark
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .system: return "跟随系统"
+        case .light: return "浅色"
+        case .dark: return "深色"
+        }
+    }
+
+    var colorScheme: ColorScheme? {
+        switch self {
+        case .system: return nil
+        case .light: return .light
+        case .dark: return .dark
+        }
+    }
+}
+
+
 @MainActor
 final class SettingsStore: ObservableObject {
     @Published var serverURL: String {
@@ -40,6 +65,14 @@ final class SettingsStore: ObservableObject {
         didSet {
             defaults.set(lightBackground, forKey: Keys.lightBackground)
             ThemeStore.shared.applyBackgroundStyle(light: lightBackground)
+        }
+    }
+
+    /// App-wide appearance: system, light, or dark.
+    @Published var appearanceMode: AppAppearance {
+        didSet {
+            defaults.set(appearanceMode.rawValue, forKey: Keys.appearanceMode)
+            ThemeStore.shared.applyAppearance(appearanceMode)
         }
     }
 
@@ -104,6 +137,7 @@ final class SettingsStore: ObservableObject {
         static let backgroundDim = "settings.backgroundDim"
         static let backgroundOpacity = "settings.backgroundOpacity"
         static let lightBackground = "settings.lightBackground"
+        static let appearanceMode = "settings.appearanceMode"
         static let karaokeLyrics = "settings.karaokeLyrics"
         static let lyricsFontSize = "settings.lyricsFontSize"
         static let lyricsLineSpacing = "settings.lyricsLineSpacing"
@@ -135,6 +169,8 @@ final class SettingsStore: ObservableObject {
             ? defaults.bool(forKey: Keys.lightBackground)
             : false
         lightBackground = light
+        appearanceMode = AppAppearance(rawValue: defaults.string(forKey: Keys.appearanceMode) ?? "") ?? .system
+        ThemeStore.shared.applyAppearance(appearanceMode)
         ThemeStore.shared.applyBackgroundStyle(light: light)
         backgroundImage = UIImage(contentsOfFile: Self.backgroundImageFile.path)
 

@@ -57,7 +57,7 @@ struct SettingsView: View {
                             icon: "paintpalette.fill",
                             color: .pink,
                             title: "主题与背景",
-                            subtitle: "\(settings.lightBackground ? "浅色" : "深色") · \(settings.hasCustomBackground ? "自定义背景" : "纯色")"
+                            subtitle: "\(settings.appearanceMode.title) · \(settings.hasCustomBackground ? "自定义背景" : "纯色")"
                         )
                     }
 

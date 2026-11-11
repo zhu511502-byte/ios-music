@@ -366,12 +366,16 @@ struct AppearanceSettingsView: View {
             .listRowBackground(AppTheme.card)
 
             Section {
-                Toggle("浅色背景", isOn: $settings.lightBackground)
-                    .tint(AppTheme.accent)
+                Picker("外观", selection: $settings.appearanceMode) {
+                    ForEach(AppAppearance.allCases) { mode in
+                        Text(mode.title).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
             } header: {
-                SectionHeader(title: "背景风格")
+                SectionHeader(title: "外观模式")
             } footer: {
-                Text("浅色只影响搜索、发现、音乐库和设置页；播放页与歌词页保持深色。")
+                Text("跟随系统会根据手机的浅色/深色模式自动切换；播放页与歌词页始终使用深色。")
             }
             .listRowBackground(AppTheme.card)
 

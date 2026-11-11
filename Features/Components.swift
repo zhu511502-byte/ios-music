@@ -7,24 +7,43 @@ import UIKit
 enum AppTheme {
     static var isLight: Bool { ThemeStore.shared.isLightBackground }
     static var background: Color {
-        isLight
-            ? Color(red: 0.94, green: 0.95, blue: 0.97)
-            : Color(red: 0.055, green: 0.055, blue: 0.075)
+        Color(UIColor { traits in
+            traits.userInterfaceStyle == .dark
+                ? UIColor(red: 0.055, green: 0.055, blue: 0.075, alpha: 1)
+                : UIColor(red: 0.94, green: 0.95, blue: 0.97, alpha: 1)
+        })
     }
     static var card: Color {
-        isLight
-            ? Color.white.opacity(0.78)
-            : Color(red: 0.10, green: 0.10, blue: 0.13)
+        Color(UIColor { traits in
+            traits.userInterfaceStyle == .dark
+                ? UIColor(red: 0.10, green: 0.10, blue: 0.13, alpha: 1)
+                : UIColor.white.withAlphaComponent(0.78)
+        })
     }
     static var accent: Color { ThemeStore.shared.accent }
+    /// Resolve against the active UIKit trait collection instead of a stored
+    /// boolean. That makes every label follow Appearance → Light/Dark/System
+    /// immediately, including when the setting changes while a page is open.
     static var primaryText: Color {
-        isLight ? Color.black.opacity(0.88) : .white
+        Color(UIColor { traits in
+            traits.userInterfaceStyle == .dark
+                ? .white
+                : UIColor.black.withAlphaComponent(0.88)
+        })
     }
     static var secondaryText: Color {
-        isLight ? Color.black.opacity(0.55) : Color.white.opacity(0.58)
+        Color(UIColor { traits in
+            traits.userInterfaceStyle == .dark
+                ? UIColor.white.withAlphaComponent(0.58)
+                : UIColor.black.withAlphaComponent(0.55)
+        })
     }
     static var separator: Color {
-        isLight ? Color.black.opacity(0.08) : Color.white.opacity(0.08)
+        Color(UIColor { traits in
+            traits.userInterfaceStyle == .dark
+                ? UIColor.white.withAlphaComponent(0.08)
+                : UIColor.black.withAlphaComponent(0.08)
+        })
     }
 }
 
@@ -304,10 +323,12 @@ struct FlowingGlowView: View {
 /// dark color, with slow specular highlights on top.
 struct AppBackgroundView: View {
     @EnvironmentObject private var settings: SettingsStore
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
+        let light = colorScheme == .light
         ZStack {
-            if settings.lightBackground {
+            if light {
                 LinearGradient(
                     colors: [
                         Color(red: 0.97, green: 0.975, blue: 0.99),
@@ -333,12 +354,12 @@ struct AppBackgroundView: View {
                 .ignoresSafeArea()
             }
 
-            if settings.lightBackground {
+            if light {
                 Color.white.opacity(0.30 + settings.backgroundDim * 0.35)
             } else {
                 Color.black.opacity(settings.backgroundDim)
             }
-            FlowingGlowView(intensity: settings.lightBackground ? 0.22 : 0.5)
+            FlowingGlowView(intensity: light ? 0.22 : 0.5)
         }
         .ignoresSafeArea()
     }

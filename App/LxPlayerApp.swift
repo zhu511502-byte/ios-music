@@ -19,7 +19,7 @@ struct LxPlayerApp: App {
                 .environmentObject(model.sync)
                 .environmentObject(model.netease)
                 .environmentObject(ThemeStore.shared)
-                .preferredColorScheme(theme.isLightBackground ? .light : .dark)
+                .preferredColorScheme(theme.appearanceMode.colorScheme)
         }
     }
 }

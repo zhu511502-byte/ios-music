@@ -40,11 +40,6 @@ struct RootView: View {
 
             if hero.playerPresented {
                 PlayerView(onClose: closePlayer)
-                    .clipShape(RoundedRectangle(cornerRadius: 32, style: .continuous))
-                    .heroAnchor(.playerCard)
-                    .padding(.horizontal, 8)
-                    .padding(.top, 8)
-                    .padding(.bottom, 8)
                     .zIndex(1)
                     .opacity(hero.playerPageOpacity)
             }

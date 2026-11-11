@@ -23,7 +23,7 @@ struct LibraryView: View {
                                         .foregroundStyle(AppTheme.accent)
                                         .frame(width: 46, height: 46)
                                         .background(
-                                            (AppTheme.isLight ? Color.black.opacity(0.06) : Color.white.opacity(0.08)),
+                                            AppTheme.separator,
                                             in: RoundedRectangle(cornerRadius: 9, style: .continuous)
                                         )
                                 }

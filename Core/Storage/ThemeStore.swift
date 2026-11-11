@@ -10,6 +10,8 @@ final class ThemeStore: ObservableObject {
     @Published private(set) var accent: Color = Color(hex: "#F54D73")
     /// True when the browsing screens use the light background palette.
     @Published private(set) var isLightBackground = false
+    /// App-wide appearance, observed by the root scene.
+    @Published private(set) var appearanceMode: AppAppearance = .system
 
     private init() {}
 
@@ -19,6 +21,10 @@ final class ThemeStore: ObservableObject {
 
     func applyBackgroundStyle(light: Bool) {
         isLightBackground = light
+    }
+
+    func applyAppearance(_ mode: AppAppearance) {
+        appearanceMode = mode
     }
 }
 

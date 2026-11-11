@@ -6,7 +6,6 @@ import UIKit
 /// independent hero layer instead.
 enum HeroAnchor: Hashable {
     case miniCapsule
-    case playerCard
     case miniCover
     case miniTitle
     case miniArtist
@@ -39,6 +38,26 @@ extension View {
     }
 }
 
+struct HeroRGBA {
+    var red: CGFloat
+    var green: CGFloat
+    var blue: CGFloat
+    var alpha: CGFloat
+
+    var color: Color {
+        Color(red: Double(red), green: Double(green), blue: Double(blue), opacity: Double(alpha))
+    }
+
+    static func lerp(_ a: HeroRGBA, _ b: HeroRGBA, _ t: CGFloat) -> HeroRGBA {
+        HeroRGBA(
+            red: a.red + (b.red - a.red) * t,
+            green: a.green + (b.green - a.green) * t,
+            blue: a.blue + (b.blue - a.blue) * t,
+            alpha: a.alpha + (b.alpha - a.alpha) * t
+        )
+    }
+}
+
 /// A complete description of one end of the transition. Using real measured
 /// anchors (rather than hand-built guesses) keeps the flying title/artist
 /// exactly on top of the real labels when the pages swap.
@@ -52,6 +71,8 @@ struct HeroSnapshot {
     var shadowOpacity: CGFloat
     var shadowRadius: CGFloat
     var shadowY: CGFloat
+    var titleColor: HeroRGBA
+    var artistColor: HeroRGBA
 }
 
 struct HeroSpec {
@@ -122,12 +143,16 @@ final class HeroTransitionCoordinator: ObservableObject {
         from: HeroSnapshot(
             cover: .zero, title: .zero, artist: .zero,
             coverCornerRadius: 10, titleFontSize: 15, artistFontSize: 11,
-            shadowOpacity: 0.3, shadowRadius: 8, shadowY: 4
+            shadowOpacity: 0.3, shadowRadius: 8, shadowY: 4,
+            titleColor: HeroRGBA(red: 1, green: 1, blue: 1, alpha: 1),
+            artistColor: HeroRGBA(red: 1, green: 1, blue: 1, alpha: 0.62)
         ),
         to: HeroSnapshot(
             cover: .zero, title: .zero, artist: .zero,
             coverCornerRadius: 10, titleFontSize: 15, artistFontSize: 11,
-            shadowOpacity: 0.3, shadowRadius: 8, shadowY: 4
+            shadowOpacity: 0.3, shadowRadius: 8, shadowY: 4,
+            titleColor: HeroRGBA(red: 1, green: 1, blue: 1, alpha: 1),
+            artistColor: HeroRGBA(red: 1, green: 1, blue: 1, alpha: 0.62)
         )
     )
 
@@ -166,7 +191,7 @@ final class HeroTransitionCoordinator: ObservableObject {
         progress = 0
 
         panelFrom = frame(.miniCapsule, fallback: fallbackMiniCapsule)
-        panelTo = frame(.playerCard, fallback: screenBounds)
+        panelTo = screenBounds
         panelCornerFrom = 24
         panelCornerTo = 0
         panelBackdropFrom = 0.06
@@ -200,7 +225,6 @@ final class HeroTransitionCoordinator: ObservableObject {
 
         let from = miniSnapshot()
         let to = playerSnapshot()
-        panelTo = frame(.playerCard, fallback: panelTo)
         spec = HeroSpec(from: from, to: to)
         progress = 0
         hidePlayerHero = true
@@ -228,14 +252,19 @@ final class HeroTransitionCoordinator: ObservableObject {
 
         progress = 1
         playerPageOpacity = 1
-        panelVisible = false
         hideMiniContent = false
         hidePlayerHero = true
-        withAnimation(.easeOut(duration: 0.14)) {
+        // Cross-fade the panel away while the page chrome fades in. Both
+        // surfaces use PlayerBackdrop, so the hand-off has no blank frame or
+        // colour flash.
+        withAnimation(.easeOut(duration: 0.16)) {
+            panelOpacity = 0
             playerContentOpacity = 1
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.14) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.16) { [weak self] in
             guard let self else { return }
+            self.panelVisible = false
+            self.panelOpacity = 1
             self.hidePlayerHero = false
             self.heroVisible = false
             self.isAnimating = false
@@ -253,7 +282,7 @@ final class HeroTransitionCoordinator: ObservableObject {
         spec = HeroSpec(from: from, to: to)
         progress = 0
 
-        panelFrom = frame(.playerCard, fallback: screenBounds)
+        panelFrom = screenBounds
         panelTo = frame(.miniCapsule, fallback: fallbackMiniCapsule)
         panelCornerFrom = 0
         panelCornerTo = 24
@@ -437,9 +466,9 @@ final class HeroTransitionCoordinator: ObservableObject {
     private func miniSnapshot() -> HeroSnapshot {
         let cover = frame(.miniCover, fallback: fallbackMiniCover)
         let title = labelFrame(.miniTitle, fallback: miniTitleFrame(from: cover),
-                               minWidth: max(screenBounds.width - cover.maxX - 110, 80), minHeight: 22)
+                               minWidth: max(screenBounds.width - cover.maxX - 110, 80))
         let artist = labelFrame(.miniArtist, fallback: miniArtistFrame(from: cover),
-                                minWidth: max(screenBounds.width - cover.maxX - 110, 80), minHeight: 16)
+                                minWidth: max(screenBounds.width - cover.maxX - 110, 80))
         return HeroSnapshot(
             cover: cover,
             title: title,
@@ -449,16 +478,18 @@ final class HeroTransitionCoordinator: ObservableObject {
             artistFontSize: 11,
             shadowOpacity: 0.3,
             shadowRadius: 7,
-            shadowY: 4
+            shadowY: 4,
+            titleColor: rgba(AppTheme.primaryText),
+            artistColor: rgba(AppTheme.secondaryText)
         )
     }
 
     private func playerSnapshot() -> HeroSnapshot {
         let cover = frame(.playerCover, fallback: fallbackPlayerCover)
         let title = labelFrame(.playerTitle, fallback: playerTitleFrame(from: cover),
-                               minWidth: max(screenBounds.width - 48, 160), minHeight: 30)
+                               minWidth: max(screenBounds.width - 48, 160))
         let artist = labelFrame(.playerArtist, fallback: playerArtistFrame(from: cover),
-                                minWidth: max(screenBounds.width - 48, 160), minHeight: 24)
+                                minWidth: max(screenBounds.width - 48, 160))
         return HeroSnapshot(
             cover: cover,
             title: title,
@@ -468,16 +499,18 @@ final class HeroTransitionCoordinator: ObservableObject {
             artistFontSize: 20,
             shadowOpacity: 0.55,
             shadowRadius: 34,
-            shadowY: 22
+            shadowY: 22,
+            titleColor: HeroRGBA(red: 1, green: 1, blue: 1, alpha: 1),
+            artistColor: HeroRGBA(red: 1, green: 1, blue: 1, alpha: 0.62)
         )
     }
 
     private func lyricsSnapshot() -> HeroSnapshot {
         let cover = frame(.lyricsCover, fallback: fallbackLyricsCover)
         let title = labelFrame(.lyricsTitle, fallback: lyricsTitleFrame(from: cover),
-                               minWidth: max(screenBounds.width - cover.maxX - 110, 140), minHeight: 22)
+                               minWidth: max(screenBounds.width - cover.maxX - 110, 140))
         let artist = labelFrame(.lyricsArtist, fallback: lyricsArtistFrame(from: cover),
-                                minWidth: max(screenBounds.width - cover.maxX - 110, 140), minHeight: 16)
+                                minWidth: max(screenBounds.width - cover.maxX - 110, 140))
         return HeroSnapshot(
             cover: cover,
             title: title,
@@ -487,7 +520,9 @@ final class HeroTransitionCoordinator: ObservableObject {
             artistFontSize: 12,
             shadowOpacity: 0.28,
             shadowRadius: 8,
-            shadowY: 4
+            shadowY: 4,
+            titleColor: HeroRGBA(red: 1, green: 1, blue: 1, alpha: 1),
+            artistColor: HeroRGBA(red: 1, green: 1, blue: 1, alpha: 0.5)
         )
     }
 
@@ -526,15 +561,25 @@ final class HeroTransitionCoordinator: ObservableObject {
                       width: title.width, height: 16)
     }
 
+    private func rgba(_ color: Color) -> HeroRGBA {
+        let ui = UIColor(color)
+        var red: CGFloat = 1
+        var green: CGFloat = 1
+        var blue: CGFloat = 1
+        var alpha: CGFloat = 1
+        guard ui.getRed(&red, green: &green, blue: &blue, alpha: &alpha) else {
+            return HeroRGBA(red: 1, green: 1, blue: 1, alpha: 1)
+        }
+        return HeroRGBA(red: red, green: green, blue: blue, alpha: alpha)
+    }
+
     private func labelFrame(
         _ anchor: HeroAnchor,
         fallback: CGRect,
-        minWidth: CGFloat,
-        minHeight: CGFloat
+        minWidth: CGFloat
     ) -> CGRect {
         var value = frame(anchor, fallback: fallback)
         value.size.width = max(value.width, minWidth)
-        value.size.height = max(value.height, minHeight)
         return value
     }
 
@@ -691,8 +736,18 @@ private struct HeroPanelVisual: View, Animatable {
             width: lerp(from.width, to.width),
             height: lerp(from.height, to.height)
         )
-        let radius = lerp(cornerFrom, cornerTo)
         let p = min(max(progress, 0), 1)
+        // Keep the card corners rounded through almost the whole expansion;
+        // only square them off in the final few percent, where the panel is
+        // already the full page. Linear interpolation made the corners look
+        // square halfway through the animation.
+        let radius: CGFloat
+        if cornerTo == 0 {
+            let q = min(max((p - 0.88) / 0.12, 0), 1)
+            radius = cornerFrom * (1 - q)
+        } else {
+            radius = cornerTo * min(p / 0.15, 1)
+        }
         let backdropOpacity = backdropFrom + (backdropTo - backdropFrom) * Double(p)
 
         ZStack {
@@ -773,6 +828,8 @@ private struct HeroVisual: View, Animatable {
         let shadowOpacity = lerp(spec.from.shadowOpacity, spec.to.shadowOpacity)
         let shadowRadius = lerp(spec.from.shadowRadius, spec.to.shadowRadius)
         let shadowY = lerp(spec.from.shadowY, spec.to.shadowY)
+        let titleColor = HeroRGBA.lerp(spec.from.titleColor, spec.to.titleColor, progress).color
+        let artistColor = HeroRGBA.lerp(spec.from.artistColor, spec.to.artistColor, progress).color
 
         ZStack(alignment: .topLeading) {
             artwork
@@ -783,8 +840,8 @@ private struct HeroVisual: View, Animatable {
                         radius: shadowRadius,
                         y: shadowY)
 
-            heroText(track.name, frame: title, size: titleSize, weight: .semibold, opacity: 1)
-            heroText(track.singer, frame: artist, size: artistSize, weight: .regular, opacity: 0.62)
+            heroText(track.name, frame: title, size: titleSize, weight: .semibold, color: titleColor)
+            heroText(track.singer, frame: artist, size: artistSize, weight: .regular, color: artistColor)
         }
     }
 
@@ -812,11 +869,11 @@ private struct HeroVisual: View, Animatable {
         frame: CGRect,
         size: CGFloat,
         weight: Font.Weight,
-        opacity: Double
+        color: Color
     ) -> some View {
         Text(text)
             .font(.system(size: max(size, 1), weight: weight))
-            .foregroundStyle(.white.opacity(opacity))
+            .foregroundStyle(color)
             .lineLimit(1)
             .frame(width: max(frame.width, 1), height: max(frame.height, 1), alignment: .leading)
             .position(x: frame.midX, y: frame.midY)
