@@ -741,13 +741,9 @@ private struct HeroPanelVisual: View, Animatable {
         // only square them off in the final few percent, where the panel is
         // already the full page. Linear interpolation made the corners look
         // square halfway through the animation.
-        let radius: CGFloat
-        if cornerTo == 0 {
-            let q = min(max((p - 0.88) / 0.12, 0), 1)
-            radius = cornerFrom * (1 - q)
-        } else {
-            radius = cornerTo * min(p / 0.15, 1)
-        }
+        let radius: CGFloat = cornerTo == 0
+            ? cornerFrom * (1 - min(max((p - 0.88) / 0.12, 0), 1))
+            : cornerTo * min(p / 0.15, 1)
         let backdropOpacity = backdropFrom + (backdropTo - backdropFrom) * Double(p)
 
         ZStack {
