@@ -6,6 +6,7 @@ import UIKit
 /// independent hero layer instead.
 enum HeroAnchor: Hashable {
     case miniCapsule
+    case playerCard
     case miniCover
     case miniTitle
     case miniArtist
@@ -165,7 +166,7 @@ final class HeroTransitionCoordinator: ObservableObject {
         progress = 0
 
         panelFrom = frame(.miniCapsule, fallback: fallbackMiniCapsule)
-        panelTo = screenBounds
+        panelTo = frame(.playerCard, fallback: screenBounds)
         panelCornerFrom = 24
         panelCornerTo = 0
         panelBackdropFrom = 0.06
@@ -180,7 +181,7 @@ final class HeroTransitionCoordinator: ObservableObject {
         playerPresented = true
         lyricsPresented = false
         playerPageOpacity = 0
-        playerContentOpacity = 1
+        playerContentOpacity = 0
         lyricsPageOpacity = 0
         lyricsContentOpacity = 1
         hidePlayerHero = true
@@ -199,6 +200,7 @@ final class HeroTransitionCoordinator: ObservableObject {
 
         let from = miniSnapshot()
         let to = playerSnapshot()
+        panelTo = frame(.playerCard, fallback: panelTo)
         spec = HeroSpec(from: from, to: to)
         progress = 0
         hidePlayerHero = true
@@ -208,11 +210,11 @@ final class HeroTransitionCoordinator: ObservableObject {
         // final progress value.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) { [weak self] in
             guard let self, self.pending == .openPlayer else { return }
-            withAnimation(.timingCurve(0.16, 0.82, 0.24, 1.0, duration: 0.38)) {
+            withAnimation(.timingCurve(0.16, 0.82, 0.24, 1.0, duration: 0.44)) {
                 self.progress = 1
             }
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.42) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.46) { [weak self] in
             self?.finishOpenPlayer()
         }
     }
@@ -227,10 +229,17 @@ final class HeroTransitionCoordinator: ObservableObject {
         progress = 1
         playerPageOpacity = 1
         panelVisible = false
-        hidePlayerHero = false
         hideMiniContent = false
-        heroVisible = false
-        isAnimating = false
+        hidePlayerHero = true
+        withAnimation(.easeOut(duration: 0.14)) {
+            playerContentOpacity = 1
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.14) { [weak self] in
+            guard let self else { return }
+            self.hidePlayerHero = false
+            self.heroVisible = false
+            self.isAnimating = false
+        }
     }
 
     func closePlayer() {
@@ -244,7 +253,7 @@ final class HeroTransitionCoordinator: ObservableObject {
         spec = HeroSpec(from: from, to: to)
         progress = 0
 
-        panelFrom = screenBounds
+        panelFrom = frame(.playerCard, fallback: screenBounds)
         panelTo = frame(.miniCapsule, fallback: fallbackMiniCapsule)
         panelCornerFrom = 0
         panelCornerTo = 24
@@ -261,11 +270,11 @@ final class HeroTransitionCoordinator: ObservableObject {
         armWatchdog()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) { [weak self] in
             guard let self, self.pending == .closePlayer else { return }
-            withAnimation(.timingCurve(0.16, 0.82, 0.24, 1.0, duration: 0.36)) {
+            withAnimation(.timingCurve(0.16, 0.82, 0.24, 1.0, duration: 0.42)) {
                 self.progress = 1
             }
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.40) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.44) { [weak self] in
             self?.finishClosePlayer()
         }
     }
@@ -327,14 +336,14 @@ final class HeroTransitionCoordinator: ObservableObject {
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) { [weak self] in
             guard let self, self.pending == .openLyrics else { return }
-            withAnimation(.timingCurve(0.16, 0.82, 0.24, 1.0, duration: 0.34)) {
+            withAnimation(.timingCurve(0.16, 0.82, 0.24, 1.0, duration: 0.40)) {
                 self.progress = 1
             }
             withAnimation(.easeOut(duration: 0.28)) {
                 self.lyricsBackgroundOpacity = 1
             }
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.38) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.42) { [weak self] in
             self?.finishOpenLyrics()
         }
     }
@@ -349,10 +358,17 @@ final class HeroTransitionCoordinator: ObservableObject {
         progress = 1
         lyricsPageOpacity = 1
         lyricsBackgroundOpacity = 1
-        lyricsContentOpacity = 1
-        hideLyricsHero = false
-        heroVisible = false
-        isAnimating = false
+        lyricsContentOpacity = 0
+        hideLyricsHero = true
+        withAnimation(.easeOut(duration: 0.14)) {
+            lyricsContentOpacity = 1
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.14) { [weak self] in
+            guard let self else { return }
+            self.hideLyricsHero = false
+            self.heroVisible = false
+            self.isAnimating = false
+        }
     }
 
     func closeLyrics() {
@@ -381,7 +397,7 @@ final class HeroTransitionCoordinator: ObservableObject {
         armWatchdog()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) { [weak self] in
             guard let self, self.pending == .closeLyrics else { return }
-            withAnimation(.timingCurve(0.16, 0.82, 0.24, 1.0, duration: 0.34)) {
+            withAnimation(.timingCurve(0.16, 0.82, 0.24, 1.0, duration: 0.40)) {
                 self.progress = 1
             }
             withAnimation(.easeOut(duration: 0.30)) {
@@ -394,7 +410,7 @@ final class HeroTransitionCoordinator: ObservableObject {
                 self.playerContentOpacity = 1
             }
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.38) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.42) { [weak self] in
             self?.finishCloseLyrics()
         }
     }
@@ -629,7 +645,8 @@ struct HeroPanelView: View {
     @ObservedObject var hero: HeroTransitionCoordinator
 
     var body: some View {
-        GeometryReader { _ in
+        GeometryReader { proxy in
+            let origin = proxy.frame(in: .global).origin
             HeroPanelVisual(
                 progress: hero.progress,
                 from: hero.panelFrom,
@@ -640,6 +657,7 @@ struct HeroPanelView: View {
                 backdropTo: hero.panelBackdropTo,
                 track: hero.heroTrack
             )
+            .offset(x: -origin.x, y: -origin.y)
             .opacity(hero.panelOpacity)
         }
         .ignoresSafeArea()
@@ -704,10 +722,12 @@ struct HeroOverlayView: View {
 
     var body: some View {
         GeometryReader { proxy in
+            let origin = proxy.frame(in: .global).origin
             ZStack(alignment: .topLeading) {
                 if hero.heroVisible, let track = hero.heroTrack {
                     HeroVisual(progress: hero.progress, spec: hero.spec, track: track)
                         .frame(width: proxy.size.width, height: proxy.size.height, alignment: .topLeading)
+                        .offset(x: -origin.x, y: -origin.y)
                 }
             }
             .frame(width: proxy.size.width, height: proxy.size.height, alignment: .topLeading)

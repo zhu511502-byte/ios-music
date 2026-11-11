@@ -218,7 +218,7 @@ struct PlayerView: View {
         HStack(alignment: .top, spacing: 12) {
             VStack(alignment: .leading, spacing: 5) {
                 Text(player.currentTrack?.name ?? "未播放")
-                    .font(.title3.weight(.bold))
+                    .font(.title3.weight(.semibold))
                     .foregroundStyle(.white)
                     .lineLimit(2)
                     .heroAnchor(.playerTitle)
