@@ -35,6 +35,14 @@ final class SettingsStore: ObservableObject {
         didSet { defaults.set(backgroundOpacity, forKey: Keys.backgroundOpacity) }
     }
 
+    /// Light palette for the browsing screens (player/lyrics stay dark).
+    @Published var lightBackground: Bool {
+        didSet {
+            defaults.set(lightBackground, forKey: Keys.lightBackground)
+            ThemeStore.shared.applyBackgroundStyle(light: lightBackground)
+        }
+    }
+
     /// Character-by-character highlight on the active lyric line.
     @Published var karaokeLyrics: Bool {
         didSet { defaults.set(karaokeLyrics, forKey: Keys.karaokeLyrics) }
@@ -53,6 +61,11 @@ final class SettingsStore: ObservableObject {
     @Published var lyricsHighlightHeight: Double {
         didSet { defaults.set(lyricsHighlightHeight, forKey: Keys.lyricsHighlightHeight) }
     }
+    /// LX sync merge strategy used as the default for every connection.
+    @Published var syncMode: SyncMode {
+        didSet { defaults.set(syncMode.rawValue, forKey: Keys.syncMode) }
+    }
+
     /// Connect to the LX sync server automatically on launch.
     @Published var autoSync: Bool {
         didSet {
@@ -90,12 +103,14 @@ final class SettingsStore: ObservableObject {
         static let backgroundBlur = "settings.backgroundBlur"
         static let backgroundDim = "settings.backgroundDim"
         static let backgroundOpacity = "settings.backgroundOpacity"
+        static let lightBackground = "settings.lightBackground"
         static let karaokeLyrics = "settings.karaokeLyrics"
         static let lyricsFontSize = "settings.lyricsFontSize"
         static let lyricsLineSpacing = "settings.lyricsLineSpacing"
         static let lyricsLetterSpacing = "settings.lyricsLetterSpacing"
         static let lyricsHighlightHeight = "settings.lyricsHighlightHeight"
         static let autoSync = "settings.autoSync"
+        static let syncMode = "settings.syncMode"
         static let themeColorHex = "settings.themeColorHex"
     }
 
@@ -116,6 +131,11 @@ final class SettingsStore: ObservableObject {
         backgroundDim = (0...0.9).contains(dim) ? dim : 0.35
         let opacity = defaults.object(forKey: Keys.backgroundOpacity) != nil ? defaults.double(forKey: Keys.backgroundOpacity) : 0.9
         backgroundOpacity = (0.2...1).contains(opacity) ? opacity : 0.9
+        let light = defaults.object(forKey: Keys.lightBackground) != nil
+            ? defaults.bool(forKey: Keys.lightBackground)
+            : false
+        lightBackground = light
+        ThemeStore.shared.applyBackgroundStyle(light: light)
         backgroundImage = UIImage(contentsOfFile: Self.backgroundImageFile.path)
 
         if defaults.object(forKey: Keys.karaokeLyrics) != nil {
@@ -127,14 +147,16 @@ final class SettingsStore: ObservableObject {
             ? defaults.double(forKey: Keys.lyricsFontSize) : 30
         lyricsFontSize = (22...40).contains(lyricFont) ? lyricFont : 30
         let lyricLine = defaults.object(forKey: Keys.lyricsLineSpacing) != nil
-            ? defaults.double(forKey: Keys.lyricsLineSpacing) : 5
-        lyricsLineSpacing = (0...18).contains(lyricLine) ? lyricLine : 5
+            ? defaults.double(forKey: Keys.lyricsLineSpacing) : 8
+        lyricsLineSpacing = (0...30).contains(lyricLine) ? lyricLine : 8
         let lyricLetter = defaults.object(forKey: Keys.lyricsLetterSpacing) != nil
             ? defaults.double(forKey: Keys.lyricsLetterSpacing) : 0
         lyricsLetterSpacing = (-1...4).contains(lyricLetter) ? lyricLetter : 0
         let lyricHighlight = defaults.object(forKey: Keys.lyricsHighlightHeight) != nil
             ? defaults.double(forKey: Keys.lyricsHighlightHeight) : 1
         lyricsHighlightHeight = (0.8...1.6).contains(lyricHighlight) ? lyricHighlight : 1
+        syncMode = SyncMode(rawValue: defaults.string(forKey: Keys.syncMode) ?? "")
+            ?? .mergeLocalRemote
         if defaults.object(forKey: Keys.autoSync) != nil {
             autoSync = defaults.bool(forKey: Keys.autoSync)
         } else {
@@ -187,7 +209,7 @@ final class SettingsStore: ObservableObject {
 
     func resetLyricsAppearance() {
         lyricsFontSize = 30
-        lyricsLineSpacing = 5
+        lyricsLineSpacing = 8
         lyricsLetterSpacing = 0
         lyricsHighlightHeight = 1
         karaokeLyrics = true

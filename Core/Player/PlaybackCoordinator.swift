@@ -70,11 +70,45 @@ final class PlaybackCoordinator: ObservableObject {
     private let player = AVPlayer()
     private var timeObserver: Any?
     private var lyricTimeObserver: Any?
-    private var pendingSeek: Double?
     private var itemStatusObservation: NSKeyValueObservation?
     private var endObserver: NSObjectProtocol?
+    private var failureObserver: NSObjectProtocol?
+    private var stallObserver: NSObjectProtocol?
+    private var interruptionBeganObserver: NSObjectProtocol?
+    private var interruptionEndedObserver: NSObjectProtocol?
+    private var sessionResetObserver: NSObjectProtocol?
+    private var routeObserver: NSObjectProtocol?
+    private var backgroundObserver: NSObjectProtocol?
+    private var foregroundObserver: NSObjectProtocol?
     private var currentIndex: Int?
+    private var pendingSeek: Double?
     private var artworkTask: Task<Void, Never>?
+    private var loadTask: Task<Void, Never>?
+    private var prefetchTask: Task<Void, Never>?
+    private var healthTask: Task<Void, Never>?
+    private var stallRecoveryTask: Task<Void, Never>?
+    private var loadGeneration = 0
+    private var activeItemToken = UUID()
+    private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
+    private var preparedNext: PreparedNext?
+    private var isRecovering = false
+    private var recoveryAttempts = 0
+    private var recoveryPosition: Double = 0
+    private var wasPlayingBeforeInterruption = false
+    private var isAppActive = true
+    private var lastNowPlayingUpdate = Date.distantPast
+    private var lastProgressDate = Date()
+    private var lastObservedTime: Double = 0
+    private var bufferStartedAt: Date?
+    private var lastPrefetchCheck = Date.distantPast
+
+    private struct PreparedNext {
+        let trackID: String
+        let index: Int
+        let quality: Quality
+        let item: AVPlayerItem
+        let url: URL
+    }
 
     var resolver: ((MusicInfo, Quality) async throws -> URL)?
     var qualityProvider: () -> Quality = { .k320 }
@@ -86,36 +120,35 @@ final class PlaybackCoordinator: ObservableObject {
             volume = min(max(Float(defaults.double(forKey: "player.volume")), 0), 1)
         }
         player.volume = volume
+        // Audio is the app's background mode. Keeping this on lets AVPlayer
+        // wait for a network hiccup instead of immediately failing an item.
+        player.automaticallyWaitsToMinimizeStalling = true
+        player.actionAtItemEnd = .pause
 
         AudioSessionController.shared.configure()
         installRemoteCommands()
         installObservers()
+        startHealthMonitor()
     }
 
     func play(track: MusicInfo, queue: [MusicInfo]? = nil, quality: Quality? = nil) {
         if let queue, !queue.isEmpty {
             self.queue = queue
-            currentIndex = queue.firstIndex(where: { $0.id == track.id })
+            currentIndex = queue.firstIndex(where: { $0.id == track.id }) ?? 0
         } else if self.queue.isEmpty {
             self.queue = [track]
             currentIndex = 0
+        } else if let index = self.queue.firstIndex(where: { $0.id == track.id }) {
+            currentIndex = index
         }
-        // Show the mini player / player UI immediately. Resolution can take a
-        // few seconds, and if no custom source is configured the error must
-        // still be visible instead of making the row look unresponsive.
-        player.pause()
-        player.replaceCurrentItem(with: nil)
-        isPlaying = false
-        currentTrack = track
-        currentTime = 0
-        clock.time = 0
-        lyricsClock.time = 0
-        pendingSeek = nil
-        duration = 0
-        errorMessage = nil
-        isBuffering = true
-        loadArtwork(for: track)
-        Task { await resolveAndPlay(track: track, quality: quality ?? qualityProvider()) }
+
+        startTrack(
+            track,
+            index: currentIndex,
+            quality: quality ?? qualityProvider(),
+            startAt: 0,
+            resetRecovery: true
+        )
     }
 
     func playQueue(_ tracks: [MusicInfo], startAt index: Int = 0) {
@@ -129,20 +162,43 @@ final class PlaybackCoordinator: ObservableObject {
         if isPlaying {
             pause()
         } else {
-            if player.currentItem == nil, let currentTrack {
-                play(track: currentTrack)
-            } else {
-                AudioSessionController.shared.activate()
-                player.play()
-                isPlaying = true
-            }
+            resume()
         }
+    }
+
+    /// Used by the lock-screen play button and by the UI when the user resumes.
+    func resume() {
+        guard let track = currentTrack else { return }
+
+        if player.currentItem == nil ||
+            player.currentItem?.status == .failed ||
+            player.currentItem?.error != nil {
+            startTrack(
+                track,
+                index: currentIndex,
+                quality: qualityProvider(),
+                startAt: max(currentTime, 0),
+                resetRecovery: true
+            )
+            return
+        }
+
+        if duration > 1, currentTime >= duration - 1 {
+            pendingSeek = 0
+        }
+
+        AudioSessionController.shared.activate()
+        player.play()
+        isPlaying = true
+        isBuffering = player.currentItem?.status != .readyToPlay
+        lastProgressDate = Date()
+        updateNowPlaying(force: true)
     }
 
     func pause() {
         player.pause()
         isPlaying = false
-        updateNowPlaying()
+        updateNowPlaying(force: true)
     }
 
     func next() {
@@ -161,16 +217,14 @@ final class PlaybackCoordinator: ObservableObject {
             playRandom(excluding: currentIndex)
         case .repeatAll:
             let index = currentIndex > 0 ? currentIndex - 1 : queue.count - 1
-            play(track: queue[index], quality: qualityProvider())
-            self.currentIndex = index
+            startTrack(queue[index], index: index, quality: qualityProvider(), startAt: 0, resetRecovery: true)
         default:
             guard currentIndex > 0 else {
                 seek(to: 0)
                 return
             }
             let index = currentIndex - 1
-            self.currentIndex = index
-            play(track: queue[index], quality: qualityProvider())
+            startTrack(queue[index], index: index, quality: qualityProvider(), startAt: 0, resetRecovery: true)
         }
     }
 
@@ -179,6 +233,8 @@ final class PlaybackCoordinator: ObservableObject {
         let index = modes.firstIndex(of: playMode) ?? 0
         playMode = modes[(index + 1) % modes.count]
         UserDefaults.standard.set(playMode.rawValue, forKey: "player.playMode")
+        preparedNext = nil
+        prefetchTask?.cancel()
     }
 
     func setVolume(_ value: Double) {
@@ -188,6 +244,246 @@ final class PlaybackCoordinator: ObservableObject {
         UserDefaults.standard.set(Double(clamped), forKey: "player.volume")
     }
 
+    /// Re-resolve the current track at a new quality, preserving playback
+    /// position so the quality switch feels seamless.
+    func reloadCurrentTrack(quality: Quality) {
+        guard let track = currentTrack else { return }
+        startTrack(
+            track,
+            index: currentIndex,
+            quality: quality,
+            startAt: max(currentTime, 0),
+            resetRecovery: true
+        )
+    }
+
+    func seek(to seconds: Double) {
+        let target = max(0, seconds)
+        currentTime = target
+        clock.time = target
+        lyricsClock.time = target
+        lastProgressDate = Date()
+        guard player.currentItem != nil else { return }
+        let time = CMTime(seconds: target, preferredTimescale: 600)
+        player.seek(to: time) { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                self.lastProgressDate = Date()
+                self.updateNowPlaying(force: true)
+            }
+        }
+    }
+
+    func stop() {
+        loadGeneration += 1
+        loadTask?.cancel()
+        prefetchTask?.cancel()
+        stallRecoveryTask?.cancel()
+        artworkTask?.cancel()
+        preparedNext = nil
+        player.pause()
+        player.replaceCurrentItem(with: nil)
+        isPlaying = false
+        isBuffering = false
+        currentTrack = nil
+        currentTime = 0
+        clock.time = 0
+        lyricsClock.time = 0
+        pendingSeek = nil
+        duration = 0
+        errorMessage = nil
+        endTransitionBackgroundTask()
+        NowPlayingCenter.shared.clear()
+    }
+
+    // MARK: - Track loading
+
+    private func startTrack(
+        _ track: MusicInfo,
+        index: Int?,
+        quality: Quality,
+        preparedItem: AVPlayerItem? = nil,
+        startAt: Double,
+        resetRecovery: Bool
+    ) {
+        loadGeneration += 1
+        let generation = loadGeneration
+        loadTask?.cancel()
+        prefetchTask?.cancel()
+        prefetchTask = nil
+        stallRecoveryTask?.cancel()
+        preparedNext = nil
+        if let index { currentIndex = index }
+        if resetRecovery {
+            isRecovering = false
+            recoveryAttempts = 0
+        }
+
+        activeItemToken = UUID()
+        itemStatusObservation = nil
+        player.pause()
+        player.replaceCurrentItem(with: nil)
+        currentTrack = track
+        currentTime = max(startAt, 0)
+        clock.time = currentTime
+        lyricsClock.time = currentTime
+        pendingSeek = startAt > 1 ? startAt : nil
+        duration = 0
+        isPlaying = false
+        isBuffering = true
+        bufferStartedAt = Date()
+        lastProgressDate = Date()
+        lastObservedTime = currentTime
+        errorMessage = nil
+
+        loadArtwork(for: track)
+        updateNowPlaying(force: true)
+
+        if let preparedItem {
+            let token = UUID()
+            activeItemToken = token
+            beginTransitionBackgroundTask()
+            installItemObservers(for: preparedItem, token: token)
+            player.replaceCurrentItem(with: preparedItem)
+            if preparedItem.status == .readyToPlay {
+                handleItemReady(preparedItem, token: token)
+            }
+            return
+        }
+
+        loadTask = Task { [weak self] in
+            guard let self else { return }
+            await self.resolveAndPlay(
+                track: track,
+                quality: quality,
+                startAt: startAt,
+                generation: generation,
+                recovering: !resetRecovery
+            )
+        }
+    }
+
+    private func resolveAndPlay(
+        track: MusicInfo,
+        quality: Quality,
+        startAt: Double,
+        generation: Int,
+        recovering: Bool
+    ) async {
+        guard let resolver else {
+            isBuffering = false
+            isPlaying = false
+            errorMessage = "播放器尚未初始化"
+            return
+        }
+
+        isBuffering = true
+        bufferStartedAt = Date()
+        if !recovering {
+            errorMessage = nil
+        }
+        beginTransitionBackgroundTask()
+
+        do {
+            let url = try await resolver(track, quality)
+            guard !Task.isCancelled, generation == loadGeneration else { return }
+
+            let item = makePlayerItem(url: url)
+            let token = UUID()
+            activeItemToken = token
+            installItemObservers(for: item, token: token)
+            player.replaceCurrentItem(with: item)
+            currentTrack = track
+            currentTime = max(startAt, 0)
+            clock.time = currentTime
+            lyricsClock.time = currentTime
+            pendingSeek = startAt > 1 ? startAt : nil
+            duration = 0
+            updateNowPlaying(force: true)
+
+            if item.status == .readyToPlay {
+                handleItemReady(item, token: token)
+            }
+        } catch {
+            guard !Task.isCancelled, generation == loadGeneration else { return }
+            isBuffering = false
+            isPlaying = false
+            player.pause()
+            player.replaceCurrentItem(with: nil)
+            endTransitionBackgroundTask()
+
+            if recovering, recoveryAttempts < 4 {
+                // A transient network/source error while the phone is locked
+                // must not end the listening session. Keep retrying with a
+                // short backoff until the lock screen is woken again.
+                scheduleRecovery(after: error.localizedDescription)
+            } else {
+                isRecovering = false
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    private func makePlayerItem(url: URL) -> AVPlayerItem {
+        let item = AVPlayerItem(url: url)
+        item.preferredForwardBufferDuration = 30
+        return item
+    }
+
+    private func installItemObservers(for item: AVPlayerItem, token: UUID) {
+        itemStatusObservation = item.observe(\.status, options: [.new, .initial]) { [weak self] item, _ in
+            Task { @MainActor in
+                self?.handleItemStatus(item, token: token)
+            }
+        }
+    }
+
+    private func handleItemStatus(_ item: AVPlayerItem, token: UUID) {
+        guard token == activeItemToken, player.currentItem === item else { return }
+
+        switch item.status {
+        case .readyToPlay:
+            handleItemReady(item, token: token)
+        case .failed:
+            guard isPlaying || isBuffering else { return }
+            isBuffering = false
+            isPlaying = false
+            if isRecovering {
+                scheduleRecovery(after: item.error?.localizedDescription ?? "播放失败")
+            } else {
+                recoverCurrentTrack(reason: item.error?.localizedDescription ?? "播放失败")
+            }
+        default:
+            break
+        }
+    }
+
+    private func handleItemReady(_ item: AVPlayerItem, token: UUID) {
+        guard token == activeItemToken, player.currentItem === item else { return }
+
+        let durationValue = CMTimeGetSeconds(item.duration)
+        duration = durationValue.isFinite ? max(durationValue, 0) : 0
+        isBuffering = false
+        bufferStartedAt = nil
+        isRecovering = false
+        recoveryAttempts = 0
+        lastProgressDate = Date()
+        lastObservedTime = currentTime
+
+        AudioSessionController.shared.activate()
+        player.play()
+        isPlaying = true
+
+        if let pendingSeek {
+            self.pendingSeek = nil
+            seek(to: pendingSeek)
+        }
+        updateNowPlaying(force: true)
+        endTransitionBackgroundTask()
+    }
+
+    // MARK: - Automatic advance / prefetch
+
     private func advance(automatic: Bool) {
         guard let currentIndex, !queue.isEmpty else { return }
 
@@ -196,26 +492,60 @@ final class PlaybackCoordinator: ObservableObject {
             seek(to: 0)
             player.play()
             isPlaying = true
-            updateNowPlaying()
+            updateNowPlaying(force: true)
         case .shuffle:
-            playRandom(excluding: currentIndex)
+            if let prepared = takePreparedNext() {
+                self.currentIndex = prepared.index
+                startTrack(
+                    queue[prepared.index],
+                    index: prepared.index,
+                    quality: prepared.quality,
+                    preparedItem: prepared.item,
+                    startAt: 0,
+                    resetRecovery: true
+                )
+            } else {
+                playRandom(excluding: currentIndex)
+            }
         case .repeatAll:
+            if let prepared = takePreparedNext() {
+                self.currentIndex = prepared.index
+                startTrack(
+                    queue[prepared.index],
+                    index: prepared.index,
+                    quality: prepared.quality,
+                    preparedItem: prepared.item,
+                    startAt: 0,
+                    resetRecovery: true
+                )
+                return
+            }
             let index = currentIndex + 1 < queue.count ? currentIndex + 1 : 0
-            self.currentIndex = index
-            play(track: queue[index], quality: qualityProvider())
+            startTrack(queue[index], index: index, quality: qualityProvider(), startAt: 0, resetRecovery: true)
         default:
             guard currentIndex + 1 < queue.count else {
                 if automatic {
                     player.pause()
                     isPlaying = false
                     seek(to: 0)
-                    updateNowPlaying()
+                    updateNowPlaying(force: true)
                 }
                 return
             }
-            let index = currentIndex + 1
-            self.currentIndex = index
-            play(track: queue[index], quality: qualityProvider())
+            if let prepared = takePreparedNext(), prepared.index == currentIndex + 1 {
+                self.currentIndex = prepared.index
+                startTrack(
+                    queue[prepared.index],
+                    index: prepared.index,
+                    quality: prepared.quality,
+                    preparedItem: prepared.item,
+                    startAt: 0,
+                    resetRecovery: true
+                )
+            } else {
+                let index = currentIndex + 1
+                startTrack(queue[index], index: index, quality: qualityProvider(), startAt: 0, resetRecovery: true)
+            }
         }
     }
 
@@ -224,97 +554,144 @@ final class PlaybackCoordinator: ObservableObject {
             seek(to: 0)
             player.play()
             isPlaying = true
-            updateNowPlaying()
+            updateNowPlaying(force: true)
             return
         }
         let candidates = queue.indices.filter { $0 != index }
         guard let next = candidates.randomElement() else { return }
-        self.currentIndex = next
-        play(track: queue[next], quality: qualityProvider())
+        currentIndex = next
+        startTrack(queue[next], index: next, quality: qualityProvider(), startAt: 0, resetRecovery: true)
     }
 
-    /// Re-resolve the current track at a new quality, preserving playback
-    /// position so the quality switch feels seamless.
-    func reloadCurrentTrack(quality: Quality) {
-        guard let track = currentTrack else { return }
-        let resume = currentTime
-        play(track: track, queue: queue, quality: quality)
-        if resume > 1 { pendingSeek = resume }
-    }
-
-    func seek(to seconds: Double) {
-        let target = max(0, seconds)
-        currentTime = target
-        clock.time = target
-        lyricsClock.time = target
-        let time = CMTime(seconds: target, preferredTimescale: 600)
-        player.seek(to: time) { [weak self] _ in
-            Task { @MainActor in self?.updateNowPlaying() }
+    private func takePreparedNext() -> PreparedNext? {
+        guard let prepared = preparedNext else { return nil }
+        preparedNext = nil
+        guard queue.indices.contains(prepared.index),
+              queue[prepared.index].id == prepared.trackID,
+              prepared.quality == qualityProvider() else {
+            return nil
         }
+        return prepared
     }
 
-    func stop() {
-        player.pause()
-        player.replaceCurrentItem(with: nil)
-        isPlaying = false
-        currentTrack = nil
-        currentTime = 0
-        clock.time = 0
-        lyricsClock.time = 0
-        pendingSeek = nil
-        duration = 0
-        NowPlayingCenter.shared.clear()
-    }
+    private func checkPrefetch() {
+        guard isPlaying, !isBuffering, !isRecovering,
+              let currentIndex, queue.indices.contains(currentIndex),
+              currentTrack != nil, duration > 1,
+              preparedNext == nil, prefetchTask == nil else { return }
 
-    private func resolveAndPlay(track: MusicInfo, quality: Quality) async {
-        guard let resolver else {
-            errorMessage = "播放器尚未初始化"
-            return
-        }
-        isBuffering = true
-        errorMessage = nil
-        do {
-            let url = try await resolver(track, quality)
-            let item = AVPlayerItem(url: url)
-            itemStatusObservation = item.observe(\.status, options: [.new, .initial]) { [weak self] item, _ in
-                Task { @MainActor in
-                    guard let self else { return }
-                    switch item.status {
-                    case .readyToPlay:
-                        self.isBuffering = false
-                        self.duration = CMTimeGetSeconds(item.duration).isFinite ? CMTimeGetSeconds(item.duration) : 0
-                        AudioSessionController.shared.activate()
-                        self.player.play()
-                        self.isPlaying = true
-                        if let pendingSeek = self.pendingSeek {
-                            self.pendingSeek = nil
-                            self.seek(to: pendingSeek)
-                        }
-                        self.updateNowPlaying()
-                    case .failed:
-                        self.isBuffering = false
-                        self.isPlaying = false
-                        self.errorMessage = item.error?.localizedDescription ?? "播放失败"
-                    default:
-                        break
-                    }
-                }
+        let now = Date()
+        guard now.timeIntervalSince(lastPrefetchCheck) >= 2 else { return }
+        lastPrefetchCheck = now
+
+        let remaining = duration - currentTime
+        guard remaining > 0, remaining <= 18 else { return }
+        guard playMode != .repeatOne else { return }
+        guard let target = nextTarget(excluding: currentIndex) else { return }
+        guard target.index != currentIndex else { return }
+        guard let resolver else { return }
+
+        let quality = qualityProvider()
+        let targetTrack = queue[target.index]
+        prefetchTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let url = try await resolver(targetTrack, quality)
+                guard !Task.isCancelled, self.currentIndex == currentIndex else { return }
+                let item = self.makePlayerItem(url: url)
+                self.preparedNext = PreparedNext(
+                    trackID: targetTrack.id,
+                    index: target.index,
+                    quality: quality,
+                    item: item,
+                    url: url
+                )
+            } catch {
+                // Prefetch is best-effort. Normal advancement will try again.
             }
-            player.replaceCurrentItem(with: item)
-            currentTrack = track
-            currentTime = 0
-            clock.time = 0
-            lyricsClock.time = 0
-            duration = 0
-            NowPlayingCenter.shared.update(track: track, elapsed: 0, duration: 0, rate: 1)
-        } catch {
+            self.prefetchTask = nil
+        }
+    }
+
+    private func nextTarget(excluding currentIndex: Int) -> (index: Int, track: MusicInfo)? {
+        guard queue.indices.contains(currentIndex) else { return nil }
+        switch playMode {
+        case .repeatOne:
+            return nil
+        case .shuffle:
+            guard queue.count > 1 else { return nil }
+            let candidates = queue.indices.filter { $0 != currentIndex }
+            guard let index = candidates.randomElement() else { return nil }
+            return (index, queue[index])
+        case .repeatAll:
+            let index = currentIndex + 1 < queue.count ? currentIndex + 1 : 0
+            return (index, queue[index])
+        case .sequential:
+            guard currentIndex + 1 < queue.count else { return nil }
+            let index = currentIndex + 1
+            return (index, queue[index])
+        }
+    }
+
+    // MARK: - Recovery
+
+    private func recoverCurrentTrack(reason: String) {
+        guard let track = currentTrack, !isRecovering else { return }
+        guard recoveryAttempts < 5 else {
             isBuffering = false
             isPlaying = false
-            player.pause()
-            player.replaceCurrentItem(with: nil)
-            errorMessage = error.localizedDescription
+            isRecovering = false
+            errorMessage = "播放已停止：\(reason)"
+            endTransitionBackgroundTask()
+            return
+        }
+
+        recoveryAttempts += 1
+        isRecovering = true
+        recoveryPosition = max(currentTime, 0)
+        isBuffering = true
+        bufferStartedAt = Date()
+        isPlaying = false
+        activeItemToken = UUID()
+        itemStatusObservation = nil
+        player.pause()
+        player.replaceCurrentItem(with: nil)
+
+        let generation = loadGeneration
+        let quality = qualityProvider()
+        let delay = min(Double(recoveryAttempts) * 1.5, 6)
+
+        loadTask?.cancel()
+        loadTask = Task { [weak self] in
+            guard let self else { return }
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            guard !Task.isCancelled, generation == self.loadGeneration else { return }
+            await self.resolveAndPlay(
+                track: track,
+                quality: quality,
+                startAt: self.recoveryPosition,
+                generation: generation,
+                recovering: true
+            )
         }
     }
+
+    private func scheduleRecovery(after message: String) {
+        guard currentTrack != nil else { return }
+        isRecovering = false
+        if recoveryAttempts < 5 {
+            isBuffering = true
+            errorMessage = nil
+            recoverCurrentTrack(reason: message)
+        } else {
+            isBuffering = false
+            isPlaying = false
+            errorMessage = "播放已停止：\(message)"
+            endTransitionBackgroundTask()
+        }
+    }
+
+    // MARK: - Observers
 
     private func installObservers() {
         timeObserver = player.addPeriodicTimeObserver(
@@ -325,21 +702,36 @@ final class PlaybackCoordinator: ObservableObject {
                 guard let self else { return }
                 let seconds = CMTimeGetSeconds(time)
                 self.currentTime = seconds.isFinite ? seconds : 0
-                self.clock.time = self.currentTime
+
                 if self.duration == 0, let item = self.player.currentItem {
                     let value = CMTimeGetSeconds(item.duration)
-                    if value.isFinite { self.duration = value }
+                    if value.isFinite, value > 0 { self.duration = value }
+                }
+
+                if self.isAppActive {
+                    self.clock.time = self.currentTime
+                }
+                // Prefetch must keep running while the screen is locked;
+                // otherwise the next track cannot be resolved after the
+                // current audio has stopped and iOS may suspend the app.
+                self.checkPrefetch()
+
+                if self.isPlaying, self.currentTime != self.lastObservedTime {
+                    self.lastObservedTime = self.currentTime
+                    self.lastProgressDate = Date()
                 }
                 self.updateNowPlaying()
             }
         }
 
         lyricTimeObserver = player.addPeriodicTimeObserver(
-            forInterval: CMTime(seconds: 0.1, preferredTimescale: 600),
+            // 30 Hz gives line changes a worst-case latency of ~33 ms
+            // instead of 250 ms. The karaoke layer still renders at 60 fps.
+            forInterval: CMTime(seconds: 1.0 / 30.0, preferredTimescale: 600),
             queue: .main
         ) { [weak self] time in
             Task { @MainActor in
-                guard let self else { return }
+                guard let self, self.isAppActive else { return }
                 let seconds = CMTimeGetSeconds(time)
                 self.lyricsClock.time = seconds.isFinite ? seconds : 0
             }
@@ -349,46 +741,208 @@ final class PlaybackCoordinator: ObservableObject {
             forName: AVPlayerItem.didPlayToEndTimeNotification,
             object: nil,
             queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor in self?.advance(automatic: true) }
+        ) { [weak self] notification in
+            guard let item = notification.object as? AVPlayerItem else { return }
+            Task { @MainActor in
+                guard let self, self.player.currentItem === item else { return }
+                self.advance(automatic: true)
+            }
         }
 
-        NotificationCenter.default.addObserver(
+        failureObserver = NotificationCenter.default.addObserver(
+            forName: AVPlayerItem.failedToPlayToEndTimeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            guard let item = notification.object as? AVPlayerItem else { return }
+            Task { @MainActor in
+                guard let self, self.player.currentItem === item else { return }
+                self.recoverCurrentTrack(reason: item.error?.localizedDescription ?? "播放中断")
+            }
+        }
+
+        stallObserver = NotificationCenter.default.addObserver(
+            forName: AVPlayerItem.playbackStalledNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            guard let item = notification.object as? AVPlayerItem else { return }
+            Task { @MainActor in
+                guard let self, self.player.currentItem === item else { return }
+                self.handlePlaybackStall()
+            }
+        }
+
+        interruptionBeganObserver = NotificationCenter.default.addObserver(
             forName: .lxAudioInterruptionBegan,
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in self?.pause() }
+            Task { @MainActor in self?.handleInterruptionBegan() }
         }
 
-        NotificationCenter.default.addObserver(
+        interruptionEndedObserver = NotificationCenter.default.addObserver(
             forName: .lxAudioInterruptionEnded,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            let shouldResume = notification.userInfo?["shouldResume"] as? Bool ?? false
+            Task { @MainActor in self?.handleInterruptionEnded(shouldResume: shouldResume) }
+        }
+
+        sessionResetObserver = NotificationCenter.default.addObserver(
+            forName: .lxAudioSessionReset,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.handleAudioSessionReset() }
+        }
+
+        routeObserver = NotificationCenter.default.addObserver(
+            forName: .lxAudioRouteChanged,
             object: nil,
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor in
-                guard let self, self.currentTrack != nil else { return }
-                AudioSessionController.shared.activate()
-                self.player.play()
-                self.isPlaying = true
+                guard let self, self.isPlaying else { return }
+                self.pause()
             }
         }
 
-        NotificationCenter.default.addObserver(
-            forName: AVAudioSession.routeChangeNotification,
+        backgroundObserver = NotificationCenter.default.addObserver(
+            forName: UIApplication.didEnterBackgroundNotification,
             object: nil,
             queue: .main
-        ) { [weak self] notification in
-            guard let raw = notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt,
-                  AVAudioSession.RouteChangeReason(rawValue: raw) == .oldDeviceUnavailable else { return }
-            Task { @MainActor in self?.pause() }
+        ) { [weak self] _ in
+            Task { @MainActor in self?.isAppActive = false }
+        }
+
+        foregroundObserver = NotificationCenter.default.addObserver(
+            forName: UIApplication.willEnterForegroundNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                self.isAppActive = true
+                self.clock.time = self.currentTime
+                self.lyricsClock.time = self.currentTime
+                self.updateNowPlaying(force: true)
+            }
         }
     }
+
+    private func handleInterruptionBegan() {
+        wasPlayingBeforeInterruption = isPlaying
+        if isPlaying {
+            player.pause()
+            isPlaying = false
+            updateNowPlaying(force: true)
+        }
+    }
+
+    private func handleInterruptionEnded(shouldResume: Bool) {
+        AudioSessionController.shared.activate()
+        let shouldPlay = wasPlayingBeforeInterruption
+        wasPlayingBeforeInterruption = false
+        guard shouldPlay, shouldResume else {
+            updateNowPlaying(force: true)
+            return
+        }
+        resume()
+    }
+
+    private func handleAudioSessionReset() {
+        let shouldPlay = isPlaying || wasPlayingBeforeInterruption
+        wasPlayingBeforeInterruption = false
+        guard currentTrack != nil, shouldPlay else { return }
+        recoverCurrentTrack(reason: "系统音频服务重置")
+    }
+
+    private func handlePlaybackStall() {
+        guard isPlaying, !isRecovering else { return }
+        isBuffering = true
+        bufferStartedAt = Date()
+        player.play()
+
+        stallRecoveryTask?.cancel()
+        stallRecoveryTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 8_000_000_000)
+            guard let self, !Task.isCancelled, self.isPlaying, self.isBuffering else { return }
+            self.recoverCurrentTrack(reason: "播放缓冲超时")
+        }
+    }
+
+    private func startHealthMonitor() {
+        healthTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                guard !Task.isCancelled else { return }
+                self?.checkPlaybackHealth()
+            }
+        }
+    }
+
+    private func checkPlaybackHealth() {
+        guard currentTrack != nil, isPlaying, !isRecovering else { return }
+
+        if let bufferStartedAt {
+            if Date().timeIntervalSince(bufferStartedAt) > 35 {
+                recoverCurrentTrack(reason: "加载超时")
+            }
+            return
+        }
+
+        guard let item = player.currentItem else {
+            recoverCurrentTrack(reason: "播放器项目丢失")
+            return
+        }
+        if item.status == .failed {
+            recoverCurrentTrack(reason: item.error?.localizedDescription ?? "播放失败")
+            return
+        }
+        if item.status != .readyToPlay {
+            return
+        }
+        if player.timeControlStatus == .waitingToPlayAtSpecifiedRate {
+            if item.isPlaybackBufferEmpty {
+                isBuffering = true
+                bufferStartedAt = Date()
+            }
+            return
+        }
+        guard player.rate > 0 else {
+            if Date().timeIntervalSince(lastProgressDate) > 12 {
+                recoverCurrentTrack(reason: "播放器已停止")
+            }
+            return
+        }
+        if Date().timeIntervalSince(lastProgressDate) > 12 {
+            recoverCurrentTrack(reason: "播放进度停滞")
+        }
+    }
+
+    // MARK: - Background transition task
+
+    private func beginTransitionBackgroundTask() {
+        guard backgroundTask == .invalid else { return }
+        backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "LxPlayer.TrackTransition") { [weak self] in
+            Task { @MainActor in self?.endTransitionBackgroundTask() }
+        }
+    }
+
+    private func endTransitionBackgroundTask() {
+        guard backgroundTask != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(backgroundTask)
+        backgroundTask = .invalid
+    }
+
+    // MARK: - Remote commands
 
     private func installRemoteCommands() {
         let center = MPRemoteCommandCenter.shared()
         center.playCommand.addTarget { [weak self] _ in
-            Task { @MainActor in self?.togglePlayPause() }
+            Task { @MainActor in self?.resume() }
             return .success
         }
         center.pauseCommand.addTarget { [weak self] _ in
@@ -415,7 +969,10 @@ final class PlaybackCoordinator: ObservableObject {
         UIApplication.shared.beginReceivingRemoteControlEvents()
     }
 
-    private func updateNowPlaying() {
+    private func updateNowPlaying(force: Bool = false) {
+        let now = Date()
+        guard force || now.timeIntervalSince(lastNowPlayingUpdate) >= 1 else { return }
+        lastNowPlayingUpdate = now
         NowPlayingCenter.shared.update(
             track: currentTrack,
             elapsed: currentTime,

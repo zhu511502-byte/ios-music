@@ -116,6 +116,11 @@ struct MusicInfo: Codable, Identifiable, Hashable, Sendable {
         return Quality.allCases.filter { known.contains($0.rawValue) }.sorted { $0.rank < $1.rank }
     }
 
+    /// Best quality advertised by the platform for this track.
+    var highestQuality: Quality? {
+        availableQualities.last
+    }
+
     var localFilePath: String? { meta["filePath"]?.stringValue }
 }
 

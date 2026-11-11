@@ -41,7 +41,7 @@ struct NetEaseAccountView: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(account.profileName ?? "网易云用户")
                         .font(.headline)
-                        .foregroundStyle(.white)
+                        .foregroundStyle(AppTheme.primaryText)
                     Text("UID \(account.uid ?? "-")")
                         .font(.caption)
                         .foregroundStyle(AppTheme.secondaryText)
@@ -87,7 +87,7 @@ struct NetEaseAccountView: View {
                         ArtworkView(url: playlist.coverURL, size: 44, cornerRadius: 8)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(playlist.name)
-                                .foregroundStyle(.white)
+                                .foregroundStyle(AppTheme.primaryText)
                                 .lineLimit(1)
                             Text("\(playlist.trackCount) 首")
                                 .font(.caption)

@@ -5,6 +5,7 @@ struct PlaylistPickerSheet: View {
 
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var theme: ThemeStore
+    @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dismiss) private var dismiss
     @State private var newListName = ""
 
@@ -24,14 +25,14 @@ struct PlaylistPickerSheet: View {
                                     .foregroundStyle(AppTheme.accent)
                                     .frame(width: 24)
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text(playlist.name).foregroundStyle(.white)
+                                    Text(playlist.name).foregroundStyle(primaryText)
                                     Text("\(playlist.count) 首")
                                         .font(.caption)
-                                        .foregroundStyle(AppTheme.secondaryText)
+                                        .foregroundStyle(secondaryText)
                                 }
                                 Spacer()
                                 Image(systemName: contains ? "checkmark.circle.fill" : "plus.circle")
-                                    .foregroundStyle(contains ? AppTheme.accent : AppTheme.secondaryText)
+                                    .foregroundStyle(contains ? AppTheme.accent : secondaryText)
                             }
                             .padding(.vertical, 2)
                         }
@@ -39,7 +40,9 @@ struct PlaylistPickerSheet: View {
                         .disabled(contains)
                     }
                 } header: {
-                    SectionHeader(title: "选择歌单")
+                    Text("选择歌单")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(secondaryText)
                 }
 
                 Section {
@@ -51,7 +54,9 @@ struct PlaylistPickerSheet: View {
                             .disabled(trimmedName.isEmpty)
                     }
                 } header: {
-                    SectionHeader(title: "新建歌单")
+                    Text("新建歌单")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(secondaryText)
                 } footer: {
                     Text("创建后会直接把《\(track.name)》加入这个歌单。")
                 }
@@ -66,6 +71,14 @@ struct PlaylistPickerSheet: View {
                 }
             }
         }
+    }
+
+    private var primaryText: Color {
+        colorScheme == .dark ? .white : Color.black.opacity(0.88)
+    }
+
+    private var secondaryText: Color {
+        colorScheme == .dark ? Color.white.opacity(0.58) : Color.black.opacity(0.55)
     }
 
     private var trimmedName: String {

@@ -110,6 +110,10 @@ enum KRCParser {
     private static let linePattern = try! NSRegularExpression(
         pattern: #"^\[(\d+),(\d+)\](.*)$"#
     )
+    private static let offsetTag = try! NSRegularExpression(
+        pattern: #"\[offset:\s*(-?\d+)\]"#,
+        options: [.caseInsensitive]
+    )
     private static let wordPattern = try! NSRegularExpression(
         pattern: #"<(\d+),(\d+),\d+>([^<]*)"#
     )
@@ -120,14 +124,20 @@ enum KRCParser {
             .replacingOccurrences(of: "\r", with: "\n")
 
         var lines: [LyricLine] = []
+        var offsetMs = 0.0
         for rawLine in normalized.components(separatedBy: "\n") {
             let line = rawLine.trimmingCharacters(in: .whitespaces)
             guard !line.isEmpty else { continue }
             let ns = line as NSString
-            guard let match = linePattern.firstMatch(in: line, options: [], range: NSRange(location: 0, length: ns.length)) else {
+            let fullRange = NSRange(location: 0, length: ns.length)
+            if let offset = offsetTag.firstMatch(in: line, options: [], range: fullRange) {
+                offsetMs = Double(ns.substring(with: offset.range(at: 1))) ?? 0
                 continue
             }
-            let startMs = Double(ns.substring(with: match.range(at: 1))) ?? 0
+            guard let match = linePattern.firstMatch(in: line, options: [], range: fullRange) else {
+                continue
+            }
+            let startMs = (Double(ns.substring(with: match.range(at: 1))) ?? 0) - offsetMs
             let durationMs = Double(ns.substring(with: match.range(at: 2))) ?? 0
             guard durationMs > 0 else { continue } // metadata header rows
 

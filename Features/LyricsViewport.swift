@@ -26,14 +26,14 @@ struct LyricsViewportView: View {
     @State private var activeIndex: Int?
 
     private func index(at time: Double) -> Int? {
-        lyrics.lines.lastIndex { ($0.time ?? -1) <= time + 0.05 }
+        lyrics.lines.lastIndex { $0.animationStart <= time + 0.05 }
     }
 
     var body: some View {
         GeometryReader { geometry in
             ScrollViewReader { proxy in
                 ScrollView(showsIndicators: false) {
-                    VStack(alignment: .leading, spacing: 0) {
+                    VStack(alignment: .leading, spacing: CGFloat(settings.lyricsLineSpacing)) {
                         Color.clear
                             .frame(height: max(80, geometry.size.height * 0.45))
 
@@ -68,20 +68,22 @@ struct LyricsViewportView: View {
                         .onChanged { _ in onInteraction() }
                 )
                 .onAppear {
-                    let initial = index(at: clock.time)
+                    let initial = index(at: lyricsClock.time)
                     activeIndex = initial
                     guard let initial else { return }
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
                         proxy.scrollTo(initial, anchor: UnitPoint(x: 0.5, y: 0.42))
                     }
                 }
-                .onReceive(clock.$time) { time in
+                // 10 Hz rather than the 4 Hz progress clock: a line must not
+                // wait up to 250 ms before its highlight starts.
+                .onReceive(lyricsClock.$time) { time in
                     guard isPageActive else { return }
                     updateActiveIndex(time, proxy: proxy)
                 }
                 .onChange(of: isPageActive) { active in
                     guard active else { return }
-                    let current = index(at: clock.time)
+                    let current = index(at: lyricsClock.time)
                     activeIndex = current
                     guard let current else { return }
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
@@ -89,7 +91,7 @@ struct LyricsViewportView: View {
                     }
                 }
                 .onChange(of: isImmersive) { _ in
-                    guard let index = activeIndex ?? index(at: clock.time) else { return }
+                    guard let index = activeIndex ?? index(at: lyricsClock.time) else { return }
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
                         withAnimation(.easeInOut(duration: 0.35)) {
                             proxy.scrollTo(index, anchor: UnitPoint(x: 0.5, y: 0.42))

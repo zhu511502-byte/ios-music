@@ -41,7 +41,15 @@ struct DiscoverView: View {
                 .pickerStyle(.segmented)
                 .padding(.horizontal, 16)
                 .padding(.top, 8)
-                .onChange(of: mode) { _ in load() }
+                .onChange(of: mode) { newMode in
+                    if newMode == .charts, source == "tx" {
+                        source = "wy"
+                    }
+                    if newMode == .playlists, source == "kg" {
+                        source = "tx"
+                    }
+                    load()
+                }
 
                 sourcePicker
                 content
@@ -52,10 +60,24 @@ struct DiscoverView: View {
         }
     }
 
+    private var availableSources: [SourceOption] {
+        switch mode {
+        case .charts:
+            // QQ has no usable leaderboard endpoint (kunyin does not
+            // implement one either), so hide it from the chart source picker.
+            return sources.filter { $0.id != "tx" }
+        case .playlists:
+            // Kugou's public playlist endpoints are not usable here. Keep
+            // Kugou in charts, but do not offer a playlist source that can
+            // only fail when tapped.
+            return sources.filter { $0.id != "kg" }
+        }
+    }
+
     private var sourcePicker: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                ForEach(sources) { item in
+                ForEach(availableSources) { item in
                     Button {
                         source = item.id
                         load()
@@ -80,44 +102,53 @@ struct DiscoverView: View {
             ProgressView("加载中…").frame(maxWidth: .infinity, maxHeight: .infinity).tint(AppTheme.accent)
         } else if let errorMessage {
             EmptyStateView(icon: "wifi.exclamationmark", title: "加载失败", message: errorMessage)
-        } else {
-            List {
-                if mode == .playlists {
-                    if playlists.isEmpty {
-                        EmptyStateView(icon: "music.note.list", title: "暂无歌单", message: "换一个平台或稍后再试。")
-                            .frame(height: 240)
-                            .listRowBackground(Color.clear)
-                    } else {
+        } else if mode == .playlists {
+            ScrollView(showsIndicators: false) {
+                if playlists.isEmpty {
+                    EmptyStateView(icon: "music.note.list", title: "暂无歌单", message: "换一个平台或稍后再试。")
+                        .frame(height: 240)
+                } else {
+                    LazyVGrid(
+                        columns: [
+                            GridItem(.flexible(), spacing: 14),
+                            GridItem(.flexible(), spacing: 14)
+                        ],
+                        spacing: 18
+                    ) {
                         ForEach(playlists) { item in
                             NavigationLink {
                                 OnlinePlaylistDetailView(source: source, item: item)
                             } label: {
-                                OnlinePlaylistRow(item: item)
+                                OnlinePlaylistGridCard(item: item)
                             }
-                            .listRowBackground(Color.clear)
-                            .listRowSeparatorTint(.white.opacity(0.08))
+                            .buttonStyle(.plain)
                         }
                     }
-                } else {
-                    ForEach(boards) { board in
-                        NavigationLink {
-                            OnlineRankDetailView(source: source, board: board)
-                        } label: {
-                            HStack(spacing: 12) {
-                                ArtworkView(url: board.artworkURL, size: 52, cornerRadius: 10)
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text(board.name).foregroundStyle(.white)
-                                    if let frequency = board.updateFrequency {
-                                        Text(frequency).font(.caption).foregroundStyle(AppTheme.secondaryText)
-                                    }
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 18)
+                }
+            }
+            .scrollContentBackground(.hidden)
+        } else {
+            List {
+                ForEach(boards) { board in
+                    NavigationLink {
+                        OnlineRankDetailView(source: source, board: board)
+                    } label: {
+                        HStack(spacing: 12) {
+                            ArtworkView(url: board.artworkURL, size: 52, cornerRadius: 10)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(board.name).foregroundStyle(AppTheme.primaryText)
+                                if let frequency = board.updateFrequency {
+                                    Text(frequency).font(.caption).foregroundStyle(AppTheme.secondaryText)
                                 }
-                                Spacer()
                             }
-                            .padding(.vertical, 4)
+                            Spacer()
                         }
-                        .listRowBackground(Color.clear)
-                        .listRowSeparatorTint(.white.opacity(0.08))
+                        .padding(.vertical, 4)
                     }
+                    .listRowBackground(Color.clear)
+                    .listRowSeparatorTint(AppTheme.separator)
                 }
             }
             .listStyle(.plain)
@@ -129,7 +160,13 @@ struct DiscoverView: View {
         isLoading = true
         errorMessage = nil
         let selectedMode = mode
-        let selectedSource = source
+        let available = availableSources
+        let selectedSource = available.contains(where: { $0.id == source })
+            ? source
+            : (available.first?.id ?? "tx")
+        if selectedSource != source {
+            source = selectedSource
+        }
         Task {
             do {
                 if selectedMode == .playlists {
@@ -154,6 +191,74 @@ struct DiscoverView: View {
                 }
             }
         }
+    }
+}
+
+private struct PlaylistCoverView: View {
+    let url: URL?
+
+    var body: some View {
+        Group {
+            if let url {
+                AsyncImage(url: url) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image.resizable().scaledToFill()
+                    case .failure:
+                        placeholder
+                    default:
+                        placeholder.overlay(ProgressView().tint(.white.opacity(0.7)))
+                    }
+                }
+            } else {
+                placeholder
+            }
+        }
+        .aspectRatio(1, contentMode: .fit)
+        .frame(maxWidth: .infinity)
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    private var placeholder: some View {
+        LinearGradient(
+            colors: [AppTheme.accent.opacity(0.7), Color.purple.opacity(0.45)],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+        .overlay(
+            Image(systemName: "music.note")
+                .font(.system(size: 28, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.85))
+        )
+    }
+}
+
+struct OnlinePlaylistGridCard: View {
+    let item: OnlinePlaylist
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            PlaylistCoverView(url: item.artworkURL)
+                .shadow(color: .black.opacity(0.25), radius: 10, y: 6)
+
+            Text(item.name)
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(AppTheme.primaryText)
+                .lineLimit(2)
+                .multilineTextAlignment(.leading)
+
+            Text(item.author ?? "")
+                .font(.caption)
+                .foregroundStyle(AppTheme.secondaryText)
+                .lineLimit(1)
+
+            if let count = item.trackCount {
+                Text("\(count) 首")
+                    .font(.caption2)
+                    .foregroundStyle(AppTheme.secondaryText)
+            }
+        }
+        .contentShape(Rectangle())
     }
 }
 
@@ -208,7 +313,7 @@ private struct OnlineTrackListPage: View {
                 HStack(spacing: 14) {
                     ArtworkView(url: artworkURL, size: 84, cornerRadius: 14)
                     VStack(alignment: .leading, spacing: 5) {
-                        Text(title).font(.headline).foregroundStyle(.white).lineLimit(2)
+                        Text(title).font(.headline).foregroundStyle(AppTheme.primaryText).lineLimit(2)
                         if let subtitle {
                             Text(subtitle).font(.caption).foregroundStyle(AppTheme.secondaryText)
                         }
@@ -242,7 +347,7 @@ private struct OnlineTrackListPage: View {
                         onAdd: { trackToAdd = track }
                     )
                     .listRowBackground(Color.clear)
-                    .listRowSeparatorTint(.white.opacity(0.08))
+                    .listRowSeparatorTint(AppTheme.separator)
                 }
             }
         }

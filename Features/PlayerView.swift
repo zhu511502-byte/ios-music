@@ -7,8 +7,10 @@ struct PlayerView: View {
     @EnvironmentObject private var settings: SettingsStore
     @EnvironmentObject private var theme: ThemeStore
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var hero: HeroTransitionCoordinator
 
-    @State private var showLyrics = false
+    var onClose: (() -> Void)? = nil
+
     @State private var showAddToPlaylist = false
     @State private var autoPresentedLandscape = false
     @State private var isLandscape = false
@@ -28,14 +30,18 @@ struct PlayerView: View {
     }
 
     var body: some View {
-        GeometryReader { geometry in
-            playerContent
-                .onAppear { updateOrientation(geometry.size) }
-                .onChange(of: geometry.size) { updateOrientation($0) }
-        }
-        .fullScreenCover(isPresented: $showLyrics) {
-            LyricsView()
-                .environmentObject(player)
+        ZStack {
+            GeometryReader { geometry in
+                playerContent
+                    .onAppear { updateOrientation(geometry.size) }
+                    .onChange(of: geometry.size) { updateOrientation($0) }
+            }
+
+            if hero.lyricsPresented {
+                LyricsView(isActive: true, onClose: closeLyricsPage)
+                    .zIndex(2)
+                    .opacity(hero.lyricsPageOpacity)
+            }
         }
         .sheet(isPresented: $showAddToPlaylist) {
             if let track = player.currentTrack {
@@ -43,6 +49,31 @@ struct PlayerView: View {
                     .environmentObject(library)
             }
         }
+        .onChange(of: hero.isAnimating) { animating in
+            // In landscape the player normally goes straight to lyrics. Do
+            // it only after the opening hero animation has fully settled,
+            // otherwise the two transitions would overlap.
+            guard !animating, isLandscape, hero.playerPresented,
+                  !hero.lyricsPresented, !autoPresentedLandscape else { return }
+            autoPresentedLandscape = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                if !hero.lyricsPresented { openLyrics() }
+            }
+        }
+        .background(Color.black.ignoresSafeArea())
+        .preferredColorScheme(.dark)
+    }
+
+    private func closePlayer() {
+        if let onClose {
+            onClose()
+        } else {
+            dismiss()
+        }
+    }
+
+    private func closeLyricsPage() {
+        hero.closeLyrics()
     }
 
     private var playerContent: some View {
@@ -58,11 +89,12 @@ struct PlayerView: View {
                     VStack(spacing: 0) {
                         ArtworkView(url: player.currentTrack?.picURL, size: artworkSize, cornerRadius: 14)
                             .shadow(color: .black.opacity(0.55), radius: 34, y: 22)
-                            .scaleEffect(player.isPlaying ? 1 : 0.94)
-                            .animation(.spring(response: 0.55, dampingFraction: 0.82), value: player.isPlaying)
+                            .heroAnchor(.playerCover)
+                            .opacity(hero.hidePlayerHero ? 0 : 1)
                             .padding(.top, 22)
 
                         titleBlock
+                            .opacity(hero.hidePlayerHero ? 0 : 1)
                             .padding(.top, 24)
 
                         PlayerProgressView(clock: player.clock, duration: player.duration) { value in
@@ -103,6 +135,7 @@ struct PlayerView: View {
                     .padding(.bottom, 24)
                 }
             }
+            .opacity(hero.playerContentOpacity)
         }
     }
 
@@ -115,65 +148,29 @@ struct PlayerView: View {
             autoPresentedLandscape = false
             return
         }
-        guard !autoPresentedLandscape, !showLyrics else { return }
+        guard !autoPresentedLandscape, !hero.lyricsPresented, !hero.isAnimating else { return }
         autoPresentedLandscape = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-            showLyrics = true
+            openLyrics()
         }
+    }
+
+    private func openLyrics() {
+        hero.openLyrics()
     }
 
     // MARK: - Background
 
     private var background: some View {
-        ZStack {
-            Color.black
-
-            if let custom = settings.backgroundImage {
-                GeometryReader { geometry in
-                    Image(uiImage: custom)
-                        .resizable()
-                        .scaledToFill()
-                        .frame(width: geometry.size.width, height: geometry.size.height)
-                        .clipped()
-                        .blur(radius: max(settings.backgroundBlur, 0.5))
-                        .opacity(settings.backgroundOpacity)
-                }
-                .ignoresSafeArea()
-            } else if let url = player.currentTrack?.picURL {
-                GeometryReader { geometry in
-                    AsyncImage(url: url) { phase in
-                        if let image = phase.image {
-                            image.resizable()
-                                .scaledToFill()
-                                .frame(width: geometry.size.width, height: geometry.size.height)
-                                .clipped()
-                                .blur(radius: 65)
-                                .opacity(0.45)
-                        }
-                    }
-                }
-                .ignoresSafeArea()
-            }
-
-            if !isLandscape {
-                FlowingGlowView(intensity: 0.35)
-            }
-
-            LinearGradient(
-                colors: [.black.opacity(0.12), .black.opacity(0.42), .black],
-                startPoint: .top,
-                endPoint: .bottom
-            )
+        PlayerBackdrop(url: player.currentTrack?.picURL)
             .ignoresSafeArea()
-        }
-        .ignoresSafeArea()
     }
 
     // MARK: - Header
 
     private var topBar: some View {
         HStack {
-            Button { dismiss() } label: {
+            Button { closePlayer() } label: {
                 Image(systemName: "chevron.down")
                     .font(.system(size: 17, weight: .semibold))
                     .foregroundStyle(.white)
@@ -191,7 +188,7 @@ struct PlayerView: View {
 
             Menu {
                 Button {
-                    showLyrics = true
+                    openLyrics()
                 } label: {
                     Label("歌词", systemImage: "quote.bubble")
                 }
@@ -224,10 +221,12 @@ struct PlayerView: View {
                     .font(.title3.weight(.bold))
                     .foregroundStyle(.white)
                     .lineLimit(2)
+                    .heroAnchor(.playerTitle)
                 Text(player.currentTrack?.singer ?? "")
                     .font(.title3)
                     .foregroundStyle(.white.opacity(0.62))
                     .lineLimit(1)
+                    .heroAnchor(.playerArtist)
                 if let albumName = albumName {
                     Text(albumName)
                         .font(.subheadline)
@@ -274,7 +273,7 @@ struct PlayerView: View {
     private var utilityControls: some View {
         HStack(spacing: 54) {
             Button {
-                showLyrics = true
+                openLyrics()
             } label: {
                 Image(systemName: "quote.bubble")
                     .font(.system(size: 20, weight: .medium))

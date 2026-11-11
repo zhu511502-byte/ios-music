@@ -37,6 +37,9 @@ final class KaraokeTextLayerUIView: UIView {
     private var clock: LyricsClock?
     private var cancellable: AnyCancellable?
     private var displayLink: CADisplayLink?
+    private var playbackClock: LyricPlaybackClock?
+    private var isAppActive = true
+    private var lifecycleObservers: [NSObjectProtocol] = []
 
     private var line: LyricLine?
     private var fontSize: CGFloat = 30
@@ -69,6 +72,7 @@ final class KaraokeTextLayerUIView: UIView {
     deinit {
         displayLink?.invalidate()
         cancellable?.cancel()
+        lifecycleObservers.forEach { NotificationCenter.default.removeObserver($0) }
     }
 
     override var intrinsicContentSize: CGSize {
@@ -95,10 +99,32 @@ final class KaraokeTextLayerUIView: UIView {
         maskLayer.colors = [
             UIColor.white.cgColor,
             UIColor.white.cgColor,
+            UIColor.clear.cgColor,
             UIColor.clear.cgColor
         ]
         highlightLayer.mask = maskLayer
         maskLayer.opacity = 0
+
+        // CADisplayLink is paused automatically by iOS in most cases, but
+        // doing it explicitly makes sure a locked screen never keeps a 60 fps
+        // Core Animation loop alive in the background.
+        lifecycleObservers.append(NotificationCenter.default.addObserver(
+            forName: UIApplication.didEnterBackgroundNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.isAppActive = false
+            self?.displayLink?.isPaused = true
+        })
+        lifecycleObservers.append(NotificationCenter.default.addObserver(
+            forName: UIApplication.willEnterForegroundNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self else { return }
+            self.isAppActive = true
+            self.displayLink?.isPaused = !self.isPlaying
+        })
     }
 
     func configure(line: LyricLine, clock: LyricsClock, fontSize: CGFloat, isPlaying: Bool, letterSpacing: CGFloat) {
@@ -114,6 +140,8 @@ final class KaraokeTextLayerUIView: UIView {
 
         if clockChanged || cancellable == nil {
             subscribe(to: clock)
+        } else {
+            playbackClock?.accept(position: lastClockTime, host: CACurrentMediaTime(), running: isPlaying)
         }
         if lineChanged || fontChanged || spacingChanged || bounds.width != lastLayoutWidth {
             rebuildIfPossible()
@@ -121,21 +149,25 @@ final class KaraokeTextLayerUIView: UIView {
         if !isPlaying {
             updateMask(at: lastClockTime)
         }
-        displayLink?.isPaused = !isPlaying
+        displayLink?.isPaused = !isPlaying || !isAppActive
         setNeedsLayout()
     }
 
     private func subscribe(to clock: LyricsClock) {
         cancellable?.cancel()
         self.clock = clock
+        let now = CACurrentMediaTime()
         lastClockTime = clock.time
-        lastClockHost = CACurrentMediaTime()
+        lastClockHost = now
+        playbackClock = LyricPlaybackClock(position: clock.time, host: now, running: isPlaying)
         cancellable = clock.$time
             .receive(on: RunLoop.main)
             .sink { [weak self] time in
                 guard let self else { return }
+                let host = CACurrentMediaTime()
                 self.lastClockTime = time
-                self.lastClockHost = CACurrentMediaTime()
+                self.lastClockHost = host
+                self.playbackClock?.accept(position: time, host: host, running: self.isPlaying)
                 if !self.isPlaying {
                     self.updateMask(at: time)
                 }
@@ -165,14 +197,13 @@ final class KaraokeTextLayerUIView: UIView {
         link.preferredFramesPerSecond = 60
         link.add(to: .main, forMode: .common)
         displayLink = link
-        link.isPaused = !isPlaying
+        link.isPaused = !isPlaying || !isAppActive
     }
 
     @objc private func tick() {
-        guard isPlaying, line != nil else { return }
+        guard isPlaying, line != nil, let playbackClock else { return }
         let now = CACurrentMediaTime()
-        let current = lastClockTime + max(0, now - lastClockHost)
-        updateMask(at: current)
+        updateMask(at: playbackClock.frame(host: now))
     }
 
     private func rebuildIfPossible() {
@@ -239,8 +270,13 @@ final class KaraokeTextLayerUIView: UIView {
         }
 
         times = effectiveTimes(for: line)
-        lineStart = line.time ?? 0
-        lineEnd = line.endTime ?? (lineStart + min(max(Double(line.text.count) * 0.32, 2.0), 4.0))
+        // The first syllable can begin slightly before the line timestamp;
+        // kunyin uses the earliest of the two so the first character is never
+        // left behind at the start of a line.
+        lineStart = line.animationStart
+        lineEnd = line.endTime
+            ?? line.syllables.last?.end
+            ?? (lineStart + min(max(Double(line.text.count) * 0.32, 2.0), 4.0))
 
         baseLayer.string = base
         highlightLayer.string = highlight
@@ -312,15 +348,30 @@ final class KaraokeTextLayerUIView: UIView {
 
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        let width = max(0, min(x, bounds.width))
-        maskLayer.frame = CGRect(x: 0, y: 0, width: width, height: bounds.height)
-        if width > 0 {
-            let feather = min(14, width)
-            let stop = max(0, (width - feather) / width)
-            maskLayer.locations = [NSNumber(value: 0), NSNumber(value: Double(stop)), NSNumber(value: 1)]
+        let width = max(bounds.width, 1)
+        let position = min(max(x, 0), width)
+        maskLayer.frame = bounds
+
+        if position <= 0.01 {
+            maskLayer.opacity = 0
+        } else if position >= width - 0.01 {
+            // Fully sung: keep every pixel in the bright layer.
+            maskLayer.locations = [0, 1, 1, 1]
             maskLayer.opacity = 1
         } else {
-            maskLayer.opacity = 0
+            // A very small feather only antialiases the cut. The previous
+            // 14 px feather put the visual edge 7 px behind the real token
+            // boundary, which made every syllable look late by half a glyph.
+            let feather = min(2.0, width * 0.1)
+            let start = max(0, (position - feather) / width)
+            let end = min(1, (position + feather) / width)
+            maskLayer.locations = [
+                NSNumber(value: 0),
+                NSNumber(value: Double(start)),
+                NSNumber(value: Double(end)),
+                NSNumber(value: 1)
+            ]
+            maskLayer.opacity = 1
         }
         CATransaction.commit()
     }

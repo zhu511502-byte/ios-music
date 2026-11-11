@@ -1,5 +1,42 @@
 import Foundation
 
+/// Merge strategy negotiated with an LX sync server when both sides already
+/// contain lists. The value strings are the protocol's `list_sync_get_sync_mode`
+/// return values.
+enum SyncMode: String, CaseIterable, Identifiable, Hashable, Sendable {
+    case mergeLocalRemote = "merge_local_remote"
+    case mergeRemoteLocal = "merge_remote_local"
+    case overwriteLocalRemote = "overwrite_local_remote"
+    case overwriteRemoteLocal = "overwrite_remote_local"
+    case overwriteLocalRemoteFull = "overwrite_local_remote_full"
+    case overwriteRemoteLocalFull = "overwrite_remote_local_full"
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .mergeLocalRemote: return "以本机为主合并"
+        case .mergeRemoteLocal: return "以远端为主合并"
+        case .overwriteLocalRemote: return "用本机覆盖远端"
+        case .overwriteRemoteLocal: return "用远端覆盖本机"
+        case .overwriteLocalRemoteFull: return "本机完整覆盖远端"
+        case .overwriteRemoteLocalFull: return "远端完整覆盖本机"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .mergeLocalRemote: return "保留双方歌曲，重复歌曲以本机为准。"
+        case .mergeRemoteLocal: return "保留双方歌曲，重复歌曲以远端为准。"
+        case .overwriteLocalRemote: return "本机列表覆盖远端，保留远端独有的用户歌单。"
+        case .overwriteRemoteLocal: return "远端列表覆盖本机，保留本机独有的用户歌单。"
+        case .overwriteLocalRemoteFull: return "删除远端独有的用户歌单，慎用。"
+        case .overwriteRemoteLocalFull: return "删除本机独有的用户歌单，慎用。"
+        }
+    }
+}
+
+
 struct SyncKeyInfo: Codable, Sendable {
     var clientId: String
     var key: String

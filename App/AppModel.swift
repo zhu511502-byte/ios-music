@@ -57,7 +57,8 @@ final class AppModel: ObservableObject {
             baseURL: url,
             authCode: settings.authCode,
             deviceName: settings.deviceName,
-            library: library
+            library: library,
+            mode: settings.syncMode
         )
     }
 

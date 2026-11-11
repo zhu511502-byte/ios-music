@@ -5,6 +5,7 @@ import SwiftUI
 struct LxPlayerApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var model = AppModel()
+    @StateObject private var theme = ThemeStore.shared
 
     var body: some Scene {
         WindowGroup {
@@ -18,7 +19,7 @@ struct LxPlayerApp: App {
                 .environmentObject(model.sync)
                 .environmentObject(model.netease)
                 .environmentObject(ThemeStore.shared)
-                .preferredColorScheme(.dark)
+                .preferredColorScheme(theme.isLightBackground ? .light : .dark)
         }
     }
 }

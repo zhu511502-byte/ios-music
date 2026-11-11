@@ -12,13 +12,23 @@ struct LibraryView: View {
             List {
                 Section {
                     ForEach(library.playlists) { playlist in
-                        NavigationLink(value: playlist.id) {
+                        NavigationLink {
+                            PlaylistDetailView(playlistID: playlist.id)
+                        } label: {
                             HStack(spacing: 12) {
-                                Image(systemName: playlist.id == "love" ? "heart.fill" : playlist.id == "default" ? "clock.fill" : "music.note.list")
-                                    .foregroundStyle(AppTheme.accent)
-                                    .frame(width: 28)
+                                if let artwork = playlist.artwork {
+                                    ArtworkView(url: artwork, size: 46, cornerRadius: 9)
+                                } else {
+                                    Image(systemName: playlist.id == "love" ? "heart.fill" : playlist.id == "default" ? "clock.fill" : "music.note.list")
+                                        .foregroundStyle(AppTheme.accent)
+                                        .frame(width: 46, height: 46)
+                                        .background(
+                                            (AppTheme.isLight ? Color.black.opacity(0.06) : Color.white.opacity(0.08)),
+                                            in: RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                        )
+                                }
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text(playlist.name).foregroundStyle(.white)
+                                    Text(playlist.name).foregroundStyle(AppTheme.primaryText)
                                     Text("\(playlist.count) 首").font(.caption).foregroundStyle(AppTheme.secondaryText)
                                 }
                             }
@@ -52,9 +62,6 @@ struct LibraryView: View {
             .scrollContentBackground(.hidden)
             .background { AppBackgroundView() }
             .navigationTitle("音乐库")
-            .navigationDestination(for: String.self) { playlistID in
-                PlaylistDetailView(playlistID: playlistID)
-            }
             .alert("新建歌单", isPresented: $showCreate) {
                 TextField("歌单名称", text: $newListName)
                 Button("取消", role: .cancel) {}

@@ -22,6 +22,14 @@ struct LyricLine: Identifiable, Hashable, Sendable {
     var hasWordTiming: Bool { !wordTimes.isEmpty && wordTimes.count == text.count }
     var hasSyllableTiming: Bool { !syllables.isEmpty }
 
+    /// The first timed token can begin just before the line timestamp. Both
+    /// line selection and the karaoke mask use the earliest point so the row
+    /// does not appear one beat late.
+    var animationStart: Double {
+        guard let first = syllables.first else { return time ?? 0 }
+        return min(time ?? first.start, first.start)
+    }
+
     init(
         id: Int,
         time: Double?,
@@ -69,55 +77,133 @@ actor LyricsService {
 
     private var cache: [String: Lyrics] = [:]
 
+    func invalidate(_ trackID: String) {
+        cache[trackID] = nil
+    }
+
     func lyrics(for track: MusicInfo) async throws -> Lyrics {
         let key = track.id
         if let cached = cache[key] { return cached }
 
-        var parsed: Lyrics?
-        do {
-            if let embedded = embeddedLyrics(track) {
-                parsed = LyricsParser.parse(embedded)
-            } else if let local = localSidecarLyrics(track) {
-                parsed = LyricsParser.parse(local)
-            } else if let url = lyricURL(track) {
-                parsed = LyricsParser.parse((try? await fetchText(url)) ?? "")
-                if parsed?.isEmpty != false {
-                    parsed = LyricsParser.parse(try await platformLyrics(track))
-                }
-            } else {
-                var wordLyrics: Lyrics?
+        var candidates: [Lyrics] = []
+        var didLoadPlatformLyrics = false
+
+        // 1) Prefer lyrics that ship with the track (local files, LX sync
+        // payloads). If they only contain a snippet, the completeness check
+        // below still lets a platform lyric replace them.
+        if let embedded = embeddedLyrics(track) {
+            candidates.append(LyricsParser.parse(embedded))
+        } else if let local = localSidecarLyrics(track) {
+            candidates.append(LyricsParser.parse(local))
+        } else {
+            // 2) The track's own lyric URL / enhanced format.
+            if let url = lyricURL(track) {
+                let text = (try? await fetchText(url)) ?? ""
+                let parsed = LyricsParser.parse(text)
+                if !parsed.isEmpty { candidates.append(parsed) }
+            }
+            if candidates.isEmpty {
                 if track.source == "wy" {
-                    wordLyrics = try? await neteaseYRCLyrics(track)
+                    let yrc = await neteaseYRCLyricsOrNil(track)
+                    if let yrc { candidates.append(yrc) }
                 } else if track.source == "kg" {
-                    wordLyrics = await kugouKRCLyrics(track)
-                }
-                if let wordLyrics {
-                    parsed = wordLyrics
+                    let krc = await kugouKRCLyrics(track)
+                    if let krc { candidates.append(krc) }
                 } else {
-                    parsed = LyricsParser.parse(try await platformLyrics(track))
+                    let text = try? await platformLyrics(track)
+                    if let text {
+                        didLoadPlatformLyrics = true
+                        candidates.append(LyricsParser.parse(text))
+                    }
                 }
             }
-        } catch {
-            // Fall through to the cross-platform search below.
-            parsed = nil
         }
 
-        // Platforms that only returned plain LRC still have no real
-        // per-character timing. Kugou's public KRC search is a good fallback:
-        // match title + singer, download the encrypted KRC and use its real
-        // word offsets. This is what makes QQ/Kuwo lyrics high precision.
-        if parsed?.isWordTimed != true, track.source != "local",
-           let krc = await kugouKRCSearchLyrics(for: track) {
-            parsed = krc
+        // 2.5) The embedded/LRC candidate may be a preview; ask the track's
+        // own platform for the real lyric before crossing platforms.
+        var best = bestLyrics(in: candidates, for: track)
+        var incomplete = best.map { looksIncomplete($0, track: track) } ?? true
+        if !didLoadPlatformLyrics, track.source != "local", incomplete {
+            let text = try? await platformLyrics(track)
+            if let text {
+                didLoadPlatformLyrics = true
+                candidates.append(LyricsParser.parse(text))
+                best = bestLyrics(in: candidates, for: track)
+                incomplete = best.map { looksIncomplete($0, track: track) } ?? true
+            }
         }
 
-        if parsed?.isEmpty != false {
-            parsed = await fallbackLyrics(for: track)
+        // 3) KRC search is both a precision upgrade (real per-token timing)
+        // and a completeness fallback for platforms whose own lyric is a
+        // preview. Only accept it when it actually scores better.
+        var needsWordTiming = best.map { !$0.isWordTimed } ?? true
+        if track.source != "local", incomplete || needsWordTiming {
+            let krc = await kugouKRCSearchLyrics(for: track)
+            if let krc {
+                candidates.append(krc)
+                best = bestLyrics(in: candidates, for: track)
+                incomplete = best.map { looksIncomplete($0, track: track) } ?? true
+                needsWordTiming = best.map { !$0.isWordTimed } ?? true
+            }
         }
 
-        guard let result = parsed, !result.isEmpty else { throw LyricsError.notFound }
+        // 4) Cross-platform search when the direct lyric is still missing or
+        // obviously truncated (a few lines that stop early in the song).
+        if incomplete {
+            let fallback = await fallbackLyrics(for: track)
+            if let fallback { candidates.append(fallback) }
+        }
+
+        guard let result = bestLyrics(in: candidates, for: track), !result.isEmpty else {
+            throw LyricsError.notFound
+        }
         cache[key] = result
         return result
+    }
+
+    private func bestLyrics(in candidates: [Lyrics], for track: MusicInfo) -> Lyrics? {
+        candidates
+            .filter { !$0.isEmpty }
+            .max { lyricScore($0, track: track) < lyricScore($1, track: track) }
+    }
+
+    /// A rough quality score: how far the lyric reaches into the track plus
+    /// how many timed lines it has. Word timing gets a small bonus so a KRC
+    /// with the same coverage beats a plain LRC.
+    private func lyricScore(_ lyrics: Lyrics, track: MusicInfo) -> Double {
+        let timed = lyrics.lines.compactMap(\.time)
+        let last = timed.max() ?? 0
+        let duration = intervalSeconds(track) ?? 0
+        let coverage = duration > 1 ? min(max(last / duration, 0), 1.2) : 0
+        let count = min(Double(lyrics.lines.count) / 24, 1)
+        let wordBonus = lyrics.isWordTimed ? 0.35 : 0
+        return coverage * 3 + count + wordBonus
+    }
+
+    /// True when a lyric is clearly only a fragment: very few lines, or it
+    /// stops in the first third of a normal-length song.
+    private func looksIncomplete(_ lyrics: Lyrics, track: MusicInfo) -> Bool {
+        if lyrics.isEmpty { return true }
+        if lyrics.lines.count < 6 { return true }
+        guard let duration = intervalSeconds(track), duration > 45,
+              let last = lyrics.lines.compactMap(\.time).max() else {
+            return lyrics.lines.count < 10
+        }
+        return last < duration * 0.35 && lyrics.lines.count < 20
+    }
+
+    private func intervalSeconds(_ track: MusicInfo) -> Double? {
+        guard let raw = track.interval?.trimmingCharacters(in: .whitespaces), !raw.isEmpty else { return nil }
+        let parts = raw.split(separator: ":")
+        if parts.count == 2,
+           let minutes = Double(parts[0]), let seconds = Double(parts[1]) {
+            return minutes * 60 + seconds
+        }
+        if parts.count == 3,
+           let hours = Double(parts[0]), let minutes = Double(parts[1]), let seconds = Double(parts[2]) {
+            return hours * 3600 + minutes * 60 + seconds
+        }
+        return Double(raw)
     }
 
     /// When the track's own platform has no usable lyric, search the other
@@ -147,7 +233,7 @@ actor LyricsService {
                 return titleMatches && singerMatches
             }
 
-            for candidate in (candidates.isEmpty ? Array(page.items.prefix(1)) : Array(candidates.prefix(2))) {
+            for candidate in candidates.prefix(2) {
                 if let lyrics = await lyricsFromCandidate(candidate) {
                     return lyrics
                 }
@@ -211,6 +297,55 @@ actor LyricsService {
         return URL(string: text)
     }
 
+    /// QQ's current lyric endpoint returns the full LRC (base64) and is more
+    /// reliable than the legacy fcg endpoint, which sometimes serves only a
+    /// short preview. `GetPlayLyricInfo` needs the numeric song id.
+    private func qqPlayLyricText(_ track: MusicInfo) async -> String? {
+        guard let rawID = track.meta["id"]?.intValue else { return nil }
+        let songID = String(rawID)
+        guard !songID.isEmpty else { return nil }
+        let payload: [String: Any] = [
+            "comm": ["ct": 19, "cv": 1873, "uin": 0],
+            "req": [
+                "method": "GetPlayLyricInfo",
+                "module": "music.musichallSong.PlayLyricInfo",
+                "param": [
+                    "format": "json", "crypt": 0, "ct": 19, "cv": 1873,
+                    "interval": 0, "lrc_t": 0, "qrc": 0, "qrc_t": 0,
+                    "roma": 0, "roma_t": 0, "songID": songID,
+                    "trans": 0, "trans_t": 0, "type": -1
+                ]
+            ]
+        ]
+        guard let payloadData = try? JSONSerialization.data(withJSONObject: payload),
+              let payloadText = String(data: payloadData, encoding: .utf8) else { return nil }
+        let sign = MusicCrypto.zzcSign(payloadText)
+        guard let url = URL(string: "https://u.y.qq.com/cgi-bin/musics.fcg?sign=\(sign)") else { return nil }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 15
+        request.httpBody = payloadData
+        request.setValue("QQMusic 14090508(android 12)", forHTTPHeaderField: "User-Agent")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        guard let (data, response) = try? await URLSession.shared.data(for: request),
+              let http = response as? HTTPURLResponse,
+              (200..<300).contains(http.statusCode),
+              let body = try? MusicParse.decode(data) else { return nil }
+        let req = MusicParse.dictionary(body["req"])
+        guard MusicParse.int(req["code"]) == 0 else { return nil }
+        let info = MusicParse.dictionary(req["data"])
+        let encoded = MusicParse.string(info["lyric"])
+        guard !encoded.isEmpty,
+              let lyricData = Data(base64Encoded: encoded),
+              let text = String(data: lyricData, encoding: .utf8),
+              !text.isEmpty else { return nil }
+        return text
+    }
+
+    private func neteaseYRCLyricsOrNil(_ track: MusicInfo) async -> Lyrics? {
+        do { return try await neteaseYRCLyrics(track) } catch { return nil }
+    }
+
     private func platformLyrics(_ track: MusicInfo) async throws -> String {
         switch track.source {
         case "wy":
@@ -223,6 +358,9 @@ actor LyricsService {
             return MusicParse.string(MusicParse.dictionary(body["lrc"])["lyric"])
 
         case "tx":
+            if let full = await qqPlayLyricText(track), !full.isEmpty {
+                return full
+            }
             let id = track.songID ?? ""
             guard !id.isEmpty else { throw LyricsError.notFound }
             let url = try makeURL("https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg", [
@@ -348,6 +486,50 @@ actor LyricsService {
         return parsed
     }
 
+    /// Pick the KRC candidate that matches both title/artist and duration.
+    /// Picking the first search hit used to attach live/remix lyrics to the
+    /// studio version, which looked like the lyric was out of sync.
+    private func pickKRCCandidate(_ candidates: [[String: Any]], for track: MusicInfo) -> [String: Any]? {
+        let target = intervalSeconds(track) ?? 0
+        let title = normalize(track.name)
+        let singer = normalize(track.singer)
+        var best: ([String: Any], Double)?
+
+        for item in candidates {
+            let itemTitle = normalize(MusicParse.string(item["song"]))
+            let itemSinger = normalize(MusicParse.string(item["singer"]))
+
+            let titleMatches = itemTitle == title
+                || itemTitle.contains(title)
+                || title.contains(itemTitle)
+            guard titleMatches else { continue }
+
+            let singerMatches = singer.isEmpty
+                || itemSinger.contains(singer)
+                || singer.contains(itemSinger)
+            guard singerMatches else { continue }
+
+            var score = itemTitle == title ? 30.0 : 10.0
+            score += 12
+            if target > 0, let candidateDuration = krcDuration(item) {
+                let delta = abs(candidateDuration - target)
+                score -= min(delta, 90) / 10
+                if delta > 25 { score -= 15 }
+            }
+            if best == nil || score > best!.1 {
+                best = (item, score)
+            }
+        }
+        return best?.0
+    }
+
+    private func krcDuration(_ item: [String: Any]) -> Double? {
+        let value = MusicParse.double(item["duration"])
+        guard value > 0 else { return nil }
+        // Some KRC responses use milliseconds.
+        return value > 10_000 ? value / 1000 : value
+    }
+
     /// Cross-platform KRC search for platforms without their own enhanced
     /// lyric format. Returns nil when no confident title/singer match exists.
     private func kugouKRCSearchLyrics(for track: MusicInfo) async -> Lyrics? {
@@ -366,20 +548,7 @@ actor LyricsService {
         let candidates = MusicParse.objects(search["candidates"])
         guard !candidates.isEmpty else { return nil }
 
-        let normalizedTitle = normalize(title)
-        let normalizedSinger = normalize(singer)
-        let matched = candidates.first { item in
-            let itemTitle = normalize(MusicParse.string(item["song"]))
-            let itemSinger = normalize(MusicParse.string(item["singer"]))
-            let titleOK = itemTitle == normalizedTitle
-                || itemTitle.contains(normalizedTitle)
-                || normalizedTitle.contains(itemTitle)
-            let singerOK = normalizedSinger.isEmpty
-                || itemSinger.contains(normalizedSinger)
-                || normalizedSinger.contains(itemSinger)
-            return titleOK && singerOK
-        }
-        guard let candidate = matched ?? candidates.first else { return nil }
+        guard let candidate = pickKRCCandidate(candidates, for: track) else { return nil }
 
         let id = MusicParse.string(candidate["id"])
         let accessKey = MusicParse.string(candidate["accesskey"])
@@ -453,6 +622,10 @@ enum LyricsParser {
     private static let timeTag = try! NSRegularExpression(
         pattern: #"\[(\d{1,4}):(\d{1,2})(?:[.:](\d{1,3}))?\]"#
     )
+    private static let offsetTag = try! NSRegularExpression(
+        pattern: #"\[offset:\s*(-?\d+)\]"#,
+        options: [.caseInsensitive]
+    )
 
     static func parse(_ raw: String) -> Lyrics {
         let normalized = raw
@@ -462,12 +635,17 @@ enum LyricsParser {
         var timed: [(time: Double, order: Int, text: String)] = []
         var plain: [String] = []
         var order = 0
+        var offset = 0.0
 
         for rawLine in normalized.components(separatedBy: "\n") {
             let line = rawLine.trimmingCharacters(in: .whitespaces)
             guard !line.isEmpty else { continue }
             let ns = line as NSString
             let range = NSRange(location: 0, length: ns.length)
+            if let match = offsetTag.firstMatch(in: line, options: [], range: range) {
+                offset = (Double(ns.substring(with: match.range(at: 1))) ?? 0) / 1000
+                continue
+            }
             let matches = timeTag.matches(in: line, options: [], range: range)
 
             if matches.isEmpty {
@@ -498,6 +676,14 @@ enum LyricsParser {
         }
 
         if !timed.isEmpty {
+            if offset != 0 {
+                // LRC's positive offset advances the lyric display (the same
+                // convention as kunyin/LX); adding it made every line late by
+                // twice the tag value.
+                timed = timed.map { item in
+                    (time: max(0, item.time - offset), order: item.order, text: item.text)
+                }
+            }
             timed.sort { $0.time == $1.time ? $0.order < $1.order : $0.time < $1.time }
             let lines = timed.enumerated().map { index, item -> LyricLine in
                 let next = timed.indices.contains(index + 1) ? timed[index + 1].time : nil

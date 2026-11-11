@@ -139,7 +139,7 @@ struct SearchView: View {
                         onAdd: { trackToAdd = track }
                     )
                     .listRowBackground(Color.clear)
-                    .listRowSeparatorTint(.white.opacity(0.08))
+                    .listRowSeparatorTint(AppTheme.separator)
                 }
                 if isLoading {
                     HStack { Spacer(); ProgressView(); Spacer() }
@@ -159,7 +159,7 @@ struct SearchView: View {
                         HStack {
                             Text("历史搜索")
                                 .font(.headline)
-                                .foregroundStyle(.white)
+                                .foregroundStyle(AppTheme.primaryText)
                             Spacer()
                             Button("清空") { historyRaw = "" }
                                 .font(.caption)
@@ -175,7 +175,7 @@ struct SearchView: View {
                                     } label: {
                                         Text(item)
                                             .font(.footnote)
-                                            .foregroundStyle(.white.opacity(0.85))
+                                            .foregroundStyle(AppTheme.primaryText.opacity(0.85))
                                             .padding(.horizontal, 12)
                                             .frame(height: 30)
                                             .background(AppTheme.card, in: Capsule())
@@ -191,7 +191,7 @@ struct SearchView: View {
                     HStack {
                         Text("热门搜索")
                             .font(.headline)
-                            .foregroundStyle(.white)
+                            .foregroundStyle(AppTheme.primaryText)
                         Spacer()
                         if isLoadingHot {
                             ProgressView().tint(AppTheme.accent).scaleEffect(0.8)
@@ -199,22 +199,25 @@ struct SearchView: View {
                     }
 
                     if source == "tx", !hotKeywords.isEmpty {
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 8) {
-                                ForEach(hotKeywords, id: \.self) { keyword in
-                                    Button {
-                                        query = keyword
-                                        search()
-                                    } label: {
-                                        Text(keyword)
-                                            .font(.footnote.weight(.medium))
-                                            .foregroundStyle(.white.opacity(0.88))
-                                            .padding(.horizontal, 12)
-                                            .frame(height: 30)
-                                            .background(AppTheme.card, in: Capsule())
-                                    }
-                                    .buttonStyle(.plain)
+                        LazyVGrid(
+                            columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3),
+                            spacing: 8
+                        ) {
+                            ForEach(Array(hotKeywords.prefix(9)), id: \.self) { keyword in
+                                Button {
+                                    query = keyword
+                                    search()
+                                } label: {
+                                    Text(keyword)
+                                        .font(.footnote.weight(.medium))
+                                        .foregroundStyle(AppTheme.primaryText.opacity(0.88))
+                                        .lineLimit(1)
+                                        .frame(maxWidth: .infinity)
+                                        .padding(.horizontal, 8)
+                                        .frame(height: 32)
+                                        .background(AppTheme.card, in: Capsule())
                                 }
+                                .buttonStyle(.plain)
                             }
                         }
                     } else if hotSongs.isEmpty {
@@ -259,14 +262,13 @@ struct SearchView: View {
     private func loadHotSongs() async {
         if source == "tx" {
             await MainActor.run { isLoadingHot = true }
-            if let keywords = try? await music.hotSearchKeywords(source: "tx"), !keywords.isEmpty {
-                await MainActor.run {
-                    hotKeywords = keywords
-                    hotSongs = []
-                    isLoadingHot = false
-                }
-                return
+            let keywords = (try? await music.hotSearchKeywords(source: "tx")) ?? []
+            await MainActor.run {
+                hotKeywords = keywords
+                hotSongs = []
+                isLoadingHot = false
             }
+            return
         }
         await MainActor.run { hotKeywords = [] }
         let board: String

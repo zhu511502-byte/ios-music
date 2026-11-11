@@ -68,12 +68,9 @@ final class NativeMusicAPI: ObservableObject, @unchecked Sendable {
     func rankBoards(source: String) -> [OnlineBoard] {
         switch source {
         case "tx":
-            return [
-                ("流行指数榜", "4"), ("热歌榜", "26"), ("新歌榜", "27"), ("飙升榜", "62"),
-                ("说唱榜", "58"), ("电音榜", "57"), ("网络歌曲榜", "28"), ("内地榜", "5"),
-                ("欧美榜", "3"), ("香港地区榜", "59"), ("韩国榜", "16"), ("日本榜", "17"),
-                ("影视金曲榜", "29"), ("国风热歌榜", "65"), ("动漫音乐榜", "72")
-            ].map { OnlineBoard(id: "tx_\($0.1)", name: $0.0, bangID: $0.1, artworkURL: nil, updateFrequency: nil, source: "tx") }
+            // Kunyin's QQ provider has no leaderboard implementation, and
+            // QQ's old rank endpoints used here are no longer usable.
+            return []
         case "wy":
             return [
                 ("飙升榜", "19723756"), ("新歌榜", "3779629"), ("原创榜", "2884035"), ("热歌榜", "3778678"),

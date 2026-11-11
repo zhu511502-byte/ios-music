@@ -1,11 +1,145 @@
+import Foundation
 import SwiftUI
 import UIKit
 
+
+
 enum AppTheme {
-    static let background = Color(red: 0.055, green: 0.055, blue: 0.075)
-    static let card = Color(red: 0.10, green: 0.10, blue: 0.13)
+    static var isLight: Bool { ThemeStore.shared.isLightBackground }
+    static var background: Color {
+        isLight
+            ? Color(red: 0.94, green: 0.95, blue: 0.97)
+            : Color(red: 0.055, green: 0.055, blue: 0.075)
+    }
+    static var card: Color {
+        isLight
+            ? Color.white.opacity(0.78)
+            : Color(red: 0.10, green: 0.10, blue: 0.13)
+    }
     static var accent: Color { ThemeStore.shared.accent }
-    static let secondaryText = Color.white.opacity(0.58)
+    static var primaryText: Color {
+        isLight ? Color.black.opacity(0.88) : .white
+    }
+    static var secondaryText: Color {
+        isLight ? Color.black.opacity(0.55) : Color.white.opacity(0.58)
+    }
+    static var separator: Color {
+        isLight ? Color.black.opacity(0.08) : Color.white.opacity(0.08)
+    }
+}
+
+/// Small in-memory cache shared by the mini player, player and hero layer.
+/// Without this, every `AsyncImage` instance starts at its placeholder; the
+/// hero layer then flashed a purple placeholder for the first frame of every
+/// transition even though the same artwork was already on screen.
+final class ArtworkImageCache {
+    static let shared = ArtworkImageCache()
+    private let cache = NSCache<NSURL, UIImage>()
+
+    private init() {
+        cache.countLimit = 32
+        cache.totalCostLimit = 80 * 1024 * 1024
+    }
+
+    func image(for url: URL) -> UIImage? {
+        cache.object(forKey: url as NSURL)
+    }
+
+    func store(_ image: UIImage, for url: URL) {
+        let cost = Int(image.size.width * image.size.height * 4)
+        cache.setObject(image, forKey: url as NSURL, cost: cost)
+    }
+}
+
+/// AsyncImage with a synchronous first frame when the artwork is already in
+/// the shared cache. Used anywhere artwork can turn into the moving hero.
+struct CachedArtworkImage<Placeholder: View>: View {
+    let url: URL?
+    let placeholder: Placeholder
+
+    @State private var image: UIImage?
+    @State private var loadedURL: URL?
+
+    init(url: URL?, @ViewBuilder placeholder: () -> Placeholder) {
+        self.url = url
+        self.placeholder = placeholder()
+        let cached = url.flatMap { ArtworkImageCache.shared.image(for: $0) }
+        let initialURL: URL? = cached == nil ? nil : url
+        _image = State(initialValue: cached)
+        _loadedURL = State(initialValue: initialURL)
+    }
+
+    var body: some View {
+        Group {
+            if let image, loadedURL == url {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+            } else {
+                placeholder
+            }
+        }
+        .task(id: url) {
+            await load()
+        }
+    }
+
+    private func load() async {
+        guard let url else { return }
+        if loadedURL == url, image != nil { return }
+        if let cached = ArtworkImageCache.shared.image(for: url) {
+            await MainActor.run {
+                image = cached
+                loadedURL = url
+            }
+            return
+        }
+
+        do {
+            let (data, _) = try await URLSession.shared.data(from: url)
+            guard !Task.isCancelled, let decoded = UIImage(data: data) else { return }
+            ArtworkImageCache.shared.store(decoded, for: url)
+            await MainActor.run {
+                image = decoded
+                loadedURL = url
+            }
+        } catch {
+            // The existing gradient placeholder remains visible.
+        }
+    }
+}
+
+/// The player's blurred-artwork backdrop. Kept as one shared view so the
+/// expanding capsule panel and the real player page are pixel-identical at the
+/// hand-off point; otherwise the panel removal shows as a colour flash.
+struct PlayerBackdrop: View {
+    let url: URL?
+
+    var body: some View {
+        ZStack {
+            Color.black
+
+            if let url {
+                GeometryReader { geometry in
+                    CachedArtworkImage(url: url) {
+                        Color.black
+                    }
+                    .frame(width: geometry.size.width, height: geometry.size.height)
+                    .clipped()
+                    .blur(radius: 65)
+                    .opacity(0.45)
+                }
+            }
+
+            FlowingGlowView(intensity: 0.72)
+
+            LinearGradient(
+                colors: [.black.opacity(0.12), .black.opacity(0.42), .black],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        }
+    }
 }
 
 struct ArtworkView: View {
@@ -14,21 +148,8 @@ struct ArtworkView: View {
     var cornerRadius: CGFloat = 10
 
     var body: some View {
-        Group {
-            if let url {
-                AsyncImage(url: url) { phase in
-                    switch phase {
-                    case .success(let image):
-                        image.resizable().scaledToFill()
-                    case .failure:
-                        placeholder
-                    default:
-                        placeholder.overlay(ProgressView().tint(.white.opacity(0.7)))
-                    }
-                }
-            } else {
-                placeholder
-            }
+        CachedArtworkImage(url: url) {
+            placeholder
         }
         .frame(width: size, height: size)
         .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
@@ -114,58 +235,68 @@ struct EmptyStateView: View {
 /// frosted glass, not a screensaver.
 struct FlowingGlowView: View {
     var intensity: Double = 0.55
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 0.12)) { context in
-            let t = context.date.timeIntervalSinceReferenceDate
-            GeometryReader { geometry in
-                let w = geometry.size.width
-                let h = geometry.size.height
-                ZStack {
-                    Circle()
-                        .fill(
-                            RadialGradient(
-                                colors: [Color.white.opacity(0.19), .clear],
-                                center: .center,
-                                startRadius: 0,
-                                endRadius: w * 0.46
-                            )
-                        )
-                        .frame(width: w * 0.92)
-                        .offset(x: CGFloat(sin(t * 0.21)) * w * 0.22,
-                                y: CGFloat(cos(t * 0.17)) * h * 0.14)
-
-                    Circle()
-                        .fill(
-                            RadialGradient(
-                                colors: [AppTheme.accent.opacity(0.18), .clear],
-                                center: .center,
-                                startRadius: 0,
-                                endRadius: w * 0.38
-                            )
-                        )
-                        .frame(width: w * 0.74)
-                        .offset(x: CGFloat(cos(t * 0.13)) * w * 0.30,
-                                y: CGFloat(sin(t * 0.19)) * h * 0.22)
-
-                    Circle()
-                        .fill(
-                            RadialGradient(
-                                colors: [Color(red: 0.45, green: 0.55, blue: 1.0).opacity(0.10), .clear],
-                                center: .center,
-                                startRadius: 0,
-                                endRadius: w * 0.34
-                            )
-                        )
-                        .frame(width: w * 0.66)
-                        .offset(x: CGFloat(sin(t * 0.11 + 1.7)) * w * 0.26,
-                                y: CGFloat(cos(t * 0.15 + 0.8)) * h * 0.20)
+        Group {
+            if scenePhase == .active {
+                TimelineView(.periodic(from: .now, by: 0.12)) { context in
+                    glow(t: context.date.timeIntervalSinceReferenceDate)
                 }
-                .blendMode(.screen)
-                .opacity(intensity)
+            } else {
+                // A locked screen must not keep an 8 fps full-screen blur
+                // animation alive. iOS may suspend or terminate the app for
+                // that CPU use, which used to stop background playback after
+                // 10–20 minutes.
+                glow(t: 0)
             }
         }
         .allowsHitTesting(false)
+    }
+
+    private func glow(t: Double) -> some View {
+        GeometryReader { geometry in
+            ZStack {
+                LinearGradient(
+                    colors: [
+                        AppTheme.accent.opacity(0.46),
+                        .clear,
+                        Color(red: 0.28, green: 0.55, blue: 1.0).opacity(0.34),
+                        Color(red: 0.68, green: 0.32, blue: 1.0).opacity(0.34)
+                    ],
+                    startPoint: UnitPoint(
+                        x: 0.5 + 0.38 * sin(t * 0.07),
+                        y: 0
+                    ),
+                    endPoint: UnitPoint(
+                        x: 0.5 + 0.38 * cos(t * 0.05),
+                        y: 1
+                    )
+                )
+
+                LinearGradient(
+                    colors: [
+                        Color(red: 0.20, green: 0.72, blue: 0.70).opacity(0.28),
+                        .clear,
+                        AppTheme.accent.opacity(0.40)
+                    ],
+                    startPoint: UnitPoint(
+                        x: 0.5 + 0.34 * cos(t * 0.04 + 1.1),
+                        y: 1
+                    ),
+                    endPoint: UnitPoint(
+                        x: 0.5 + 0.34 * sin(t * 0.06),
+                        y: 0
+                    )
+                )
+            }
+            .scaleEffect(1.25)
+            .blur(radius: max(geometry.size.width, geometry.size.height) * 0.10)
+            .hueRotation(.degrees(sin(t * 0.05) * 16))
+            .blendMode(.screen)
+            .opacity(intensity)
+            .clipped()
+        }
     }
 }
 
@@ -176,7 +307,18 @@ struct AppBackgroundView: View {
 
     var body: some View {
         ZStack {
-            Color(red: 0.03, green: 0.03, blue: 0.05)
+            if settings.lightBackground {
+                LinearGradient(
+                    colors: [
+                        Color(red: 0.97, green: 0.975, blue: 0.99),
+                        Color(red: 0.88, green: 0.90, blue: 0.95)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            } else {
+                Color(red: 0.03, green: 0.03, blue: 0.05)
+            }
 
             if let image = settings.backgroundImage {
                 GeometryReader { geometry in
@@ -191,8 +333,12 @@ struct AppBackgroundView: View {
                 .ignoresSafeArea()
             }
 
-            Color.black.opacity(settings.backgroundDim)
-            FlowingGlowView(intensity: 0.5)
+            if settings.lightBackground {
+                Color.white.opacity(0.30 + settings.backgroundDim * 0.35)
+            } else {
+                Color.black.opacity(settings.backgroundDim)
+            }
+            FlowingGlowView(intensity: settings.lightBackground ? 0.22 : 0.5)
         }
         .ignoresSafeArea()
     }
@@ -223,14 +369,14 @@ struct OnlineTrackRow: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(track.name)
                             .font(.body.weight(.medium))
-                            .foregroundStyle(.white)
+                            .foregroundStyle(AppTheme.primaryText)
                             .lineLimit(1)
                         Text(track.singer)
                             .font(.caption)
                             .foregroundStyle(AppTheme.secondaryText)
                             .lineLimit(1)
-                        if !track.qualitys.isEmpty {
-                            Text(track.qualitys.prefix(4).map(\.type).joined(separator: " · "))
+                        if let quality = track.highestQuality {
+                            Text(quality.displayName)
                                 .font(.caption2)
                                 .foregroundStyle(AppTheme.accent.opacity(0.9))
                                 .lineLimit(1)
@@ -268,7 +414,7 @@ struct OnlinePlaylistRow: View {
         HStack(spacing: 12) {
             ArtworkView(url: item.artworkURL, size: 56, cornerRadius: 12)
             VStack(alignment: .leading, spacing: 4) {
-                Text(item.name).font(.body.weight(.medium)).foregroundStyle(.white).lineLimit(1)
+                Text(item.name).font(.body.weight(.medium)).foregroundStyle(AppTheme.primaryText).lineLimit(1)
                 Text(item.author ?? "")
                     .font(.caption).foregroundStyle(AppTheme.secondaryText).lineLimit(1)
                 if let count = item.trackCount {
@@ -293,6 +439,7 @@ struct CoverMeshBackground: View {
     var animated: Bool = true
 
     @State private var palette: [Color] = CoverMeshBackground.fallbackPalette
+    @Environment(\.scenePhase) private var scenePhase
 
     static let fallbackPalette: [Color] = [
         Color(red: 0.24, green: 0.30, blue: 0.52),
@@ -321,7 +468,7 @@ struct CoverMeshBackground: View {
                 }
             }
 
-            if animated {
+            if animated && scenePhase == .active {
                 TimelineView(.periodic(from: .now, by: 0.2)) { context in
                     meshLayer(t: context.date.timeIntervalSinceReferenceDate)
                 }

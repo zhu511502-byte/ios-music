@@ -2,6 +2,7 @@ import SwiftUI
 
 struct MiniPlayerView: View {
     @EnvironmentObject private var player: PlaybackCoordinator
+    @EnvironmentObject private var theme: ThemeStore
     let onTap: () -> Void
 
     @State private var lyrics: Lyrics?
@@ -11,16 +12,19 @@ struct MiniPlayerView: View {
             HStack(spacing: 11) {
                 ArtworkView(url: player.currentTrack?.picURL, size: 46, cornerRadius: 10)
                     .shadow(color: .black.opacity(0.3), radius: 7, y: 4)
+                    .heroAnchor(.miniCover)
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(player.currentTrack?.name ?? "")
                         .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(AppTheme.primaryText)
                         .lineLimit(1)
+                        .heroAnchor(.miniTitle)
                     Text(player.currentTrack?.singer ?? "")
                         .font(.caption2)
-                        .foregroundStyle(.white.opacity(0.5))
+                        .foregroundStyle(AppTheme.secondaryText)
                         .lineLimit(1)
+                        .heroAnchor(.miniArtist)
                     MiniLyricLine(clock: player.clock, lyrics: lyrics)
                 }
 
@@ -31,7 +35,7 @@ struct MiniPlayerView: View {
                 } label: {
                     Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
                         .font(.system(size: 18, weight: .semibold))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(AppTheme.primaryText)
                         .frame(width: 36, height: 38)
                         .contentShape(Rectangle())
                 }
@@ -42,7 +46,7 @@ struct MiniPlayerView: View {
                 } label: {
                     Image(systemName: "forward.fill")
                         .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.9))
+                        .foregroundStyle(AppTheme.primaryText.opacity(0.9))
                         .frame(width: 32, height: 38)
                         .contentShape(Rectangle())
                 }
@@ -52,12 +56,10 @@ struct MiniPlayerView: View {
             .padding(.top, 8)
             .padding(.bottom, 7)
 
-            MiniProgressBar(clock: player.clock, duration: player.duration)
-                .padding(.horizontal, 12)
-                .padding(.bottom, 8)
         }
         .background(glassBackground)
         .contentShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .heroAnchor(.miniCapsule)
         .onTapGesture(perform: onTap)
         .task(id: player.currentTrack?.id) {
             lyrics = nil
@@ -114,7 +116,7 @@ private struct MiniLyricLine: View {
     var body: some View {
         Text(text)
             .font(.caption2)
-            .foregroundStyle(.white.opacity(0.58))
+            .foregroundStyle(AppTheme.secondaryText)
             .lineLimit(1)
             .frame(height: 13, alignment: .leading)
     }
@@ -131,21 +133,3 @@ private struct MiniLyricLine: View {
     }
 }
 
-private struct MiniProgressBar: View {
-    @ObservedObject var clock: PlaybackClock
-    let duration: Double
-
-    var body: some View {
-        GeometryReader { geometry in
-            let fraction = duration > 0 ? min(max(clock.time / duration, 0), 1) : 0
-            ZStack(alignment: .leading) {
-                Capsule()
-                    .fill(.white.opacity(0.14))
-                Capsule()
-                    .fill(.white.opacity(0.72))
-                    .frame(width: max(0, CGFloat(fraction) * geometry.size.width))
-            }
-        }
-        .frame(height: 2)
-    }
-}

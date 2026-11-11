@@ -127,7 +127,7 @@ extension NativeMusicAPI {
 
     func hotSearchTX() async throws -> [String] {
         let payload: [String: Any] = [
-            "comm": ["ct": "19", "cv": "1803", "uin": "0"],
+            "comm": ["ct": 19, "cv": 1803, "uin": 0],
             "hotkey": [
                 "module": "tencent_musicsoso_hotkey.HotkeyService",
                 "method": "GetHotkeyForQQMusicPC",

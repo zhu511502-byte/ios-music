@@ -10,6 +10,7 @@ struct LyricsView: View {
     @EnvironmentObject private var settings: SettingsStore
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var theme: ThemeStore
+    @EnvironmentObject private var hero: HeroTransitionCoordinator
     @Environment(\.dismiss) private var dismiss
 
     @State private var lyrics: Lyrics?
@@ -28,12 +29,16 @@ struct LyricsView: View {
 
             ZStack {
                 background
+                    .opacity(hero.lyricsBackgroundOpacity)
 
-                if landscape {
-                    landscapeLayout(size: geometry.size)
-                } else {
-                    portraitLayout(size: geometry.size)
+                Group {
+                    if landscape {
+                        landscapeLayout(size: geometry.size)
+                    } else {
+                        portraitLayout(size: geometry.size)
+                    }
                 }
+                .opacity(hero.lyricsContentOpacity)
             }
             .onAppear { isLandscape = landscape }
             .onChange(of: geometry.size) { size in
@@ -71,6 +76,8 @@ struct LyricsView: View {
         .sheet(isPresented: $showLyricsSettings) {
             LyricsSettingsView()
         }
+        .background(Color.black.ignoresSafeArea())
+        .preferredColorScheme(.dark)
     }
 
     // MARK: - Layouts
@@ -97,15 +104,12 @@ struct LyricsView: View {
     private func landscapeLayout(size: CGSize) -> some View {
         let panelWidth = min(max(300, size.width * 0.4), 470)
         return HStack(spacing: 0) {
-            if !isImmersive {
-                landscapePanel(size: size)
-                    .frame(width: panelWidth)
-                    .transition(.opacity)
-            } else {
-                // Keep the lyrics column the same width in immersive mode so
-                // entering/leaving full screen cannot reflow the text.
-                Color.clear.frame(width: panelWidth)
-            }
+            // Landscape always keeps the player panel. "Immersive" in
+            // landscape therefore matches the normal landscape player
+            // instead of collapsing into a lyrics-only column.
+            landscapePanel(size: size)
+                .frame(width: panelWidth)
+                .transition(.opacity)
 
             lyricsContent(isLandscape: true)
                 .id("lyrics-content-landscape")
@@ -128,16 +132,22 @@ struct LyricsView: View {
 
             ArtworkView(url: player.currentTrack?.picURL, size: 46, cornerRadius: 9)
                 .shadow(color: .black.opacity(0.28), radius: 8, y: 4)
+                .opacity(hero.hideLyricsHero ? 0 : 1)
+                .heroAnchor(.lyricsCover)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(player.currentTrack?.name ?? "歌词")
                     .font(.headline.weight(.semibold))
                     .foregroundStyle(.white)
                     .lineLimit(1)
+                    .opacity(hero.hideLyricsHero ? 0 : 1)
+                    .heroAnchor(.lyricsTitle)
                 Text(player.currentTrack?.singer ?? "")
                     .font(.caption)
                     .foregroundStyle(.white.opacity(0.5))
                     .lineLimit(1)
+                    .opacity(hero.hideLyricsHero ? 0 : 1)
+                    .heroAnchor(.lyricsArtist)
             }
 
             Spacer(minLength: 6)
@@ -170,7 +180,9 @@ struct LyricsView: View {
                 Spacer()
                 ArtworkView(url: player.currentTrack?.picURL, size: artwork, cornerRadius: 10)
                     .shadow(color: .black.opacity(0.4), radius: 22, y: 12)
-                Spacer()
+                    .opacity(hero.hideLyricsHero ? 0 : 1)
+                    .heroAnchor(.lyricsCover)
+                    Spacer()
             }
             .padding(.top, 4)
 
@@ -180,12 +192,16 @@ struct LyricsView: View {
                         .font(.title3.weight(.bold))
                         .foregroundStyle(.white)
                         .lineLimit(2)
+                        .opacity(hero.hideLyricsHero ? 0 : 1)
+                        .heroAnchor(.lyricsTitle)
                     Text(player.currentTrack?.singer ?? "")
                         .font(.subheadline)
                         .foregroundStyle(.white.opacity(0.55))
                         .lineLimit(1)
+                        .opacity(hero.hideLyricsHero ? 0 : 1)
+                        .heroAnchor(.lyricsArtist)
                 }
-                Spacer(minLength: 6)
+                    Spacer(minLength: 6)
                 loveButton
                 moreMenu
             }
@@ -409,7 +425,7 @@ struct LyricsView: View {
                         karaoke: settings.karaokeLyrics || lyrics.isWordTimed,
                         isPlaying: player.isPlaying,
                         isImmersive: isImmersive,
-                        horizontalPadding: isLandscape ? (isImmersive ? 70 : 38) : 24,
+                        horizontalPadding: isLandscape ? 38 : 24,
                         onSeek: { time in player.seek(to: time) },
                         onExitImmersive: {
                             withAnimation(.easeInOut(duration: 0.25)) { isImmersive = false }
@@ -446,19 +462,9 @@ struct LyricsView: View {
         ZStack {
             Color.black
 
-            if let custom = settings.backgroundImage {
-                GeometryReader { geometry in
-                    Image(uiImage: custom)
-                        .resizable()
-                        .scaledToFill()
-                        .frame(width: geometry.size.width, height: geometry.size.height)
-                        .clipped()
-                        .blur(radius: max(settings.backgroundBlur, 0.5))
-                        .scaleEffect(1.08)
-                        .opacity(settings.backgroundOpacity)
-                }
-                .ignoresSafeArea()
-            } else if let url = player.currentTrack?.picURL {
+            // Same rule as the player: the lyric page uses the album art,
+            // never the browsing background from Settings.
+            if let url = player.currentTrack?.picURL {
                 GeometryReader { geometry in
                     AsyncImage(url: url) { phase in
                         if let image = phase.image {
@@ -475,9 +481,7 @@ struct LyricsView: View {
                 .ignoresSafeArea()
             }
 
-            if !isLandscape {
-                FlowingGlowView(intensity: 0.5)
-            }
+            FlowingGlowView(intensity: 0.78)
 
             LinearGradient(
                 stops: [
@@ -525,6 +529,9 @@ struct LyricsView: View {
             return
         }
         if !force, loadedTrackID == track.id, lyrics != nil { return }
+        if force {
+            await LyricsService.shared.invalidate(track.id)
+        }
 
         loadedTrackID = track.id
         lyrics = nil

@@ -23,9 +23,11 @@ final class SyncClient: ObservableObject {
     private var pendingUpload = false
 
     private var modeContinuation: CheckedContinuation<String, Never>?
+    private var preferredMode: SyncMode?
 
-    func connect(baseURL: URL, authCode: String?, deviceName: String, library: LibraryStore) async {
+    func connect(baseURL: URL, authCode: String?, deviceName: String, library: LibraryStore, mode: SyncMode? = nil) async {
         disconnect()
+        preferredMode = mode
         status = .connecting
         message = "正在连接 \(baseURL.host ?? "")…"
         self.library = library
@@ -80,6 +82,12 @@ final class SyncClient: ObservableObject {
     }
 
     private func requestMode() async -> String {
+        // An explicit setting from the sync page wins over the old
+        // per-server saved choice, so changing the picker takes effect on the
+        // very next connection.
+        if let preferredMode {
+            return preferredMode.rawValue
+        }
         // A saved choice is reused on every later launch (including auto-sync).
         if let saved = UserDefaults.standard.string(forKey: syncModeKey), !saved.isEmpty {
             return saved
@@ -117,6 +125,7 @@ final class SyncClient: ObservableObject {
         socket = nil
         isConnected = false
         pendingUpload = false
+        preferredMode = nil
         if let modeContinuation {
             modeContinuation.resume(returning: "cancel")
             self.modeContinuation = nil

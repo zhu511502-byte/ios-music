@@ -8,11 +8,17 @@ final class ThemeStore: ObservableObject {
     static let shared = ThemeStore()
 
     @Published private(set) var accent: Color = Color(hex: "#F54D73")
+    /// True when the browsing screens use the light background palette.
+    @Published private(set) var isLightBackground = false
 
     private init() {}
 
     func apply(hex: String) {
         accent = Color(hex: hex)
+    }
+
+    func applyBackgroundStyle(light: Bool) {
+        isLightBackground = light
     }
 }
 
