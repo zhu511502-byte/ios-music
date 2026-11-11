@@ -169,8 +169,9 @@ final class SettingsStore: ObservableObject {
             ? defaults.bool(forKey: Keys.lightBackground)
             : false
         lightBackground = light
-        appearanceMode = AppAppearance(rawValue: defaults.string(forKey: Keys.appearanceMode) ?? "") ?? .system
-        ThemeStore.shared.applyAppearance(appearanceMode)
+        let initialAppearance = AppAppearance(rawValue: defaults.string(forKey: Keys.appearanceMode) ?? "") ?? .system
+        appearanceMode = initialAppearance
+        ThemeStore.shared.applyAppearance(initialAppearance)
         ThemeStore.shared.applyBackgroundStyle(light: light)
         backgroundImage = UIImage(contentsOfFile: Self.backgroundImageFile.path)
 
