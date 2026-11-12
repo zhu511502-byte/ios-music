@@ -76,7 +76,6 @@ struct PlayerView: View {
                     .padding(.horizontal, 24)
                     .padding(.top, 6)
                     .padding(.bottom, 2)
-                    .opacity(hero.playerTopBarOpacity)
 
                 ScrollView(showsIndicators: false) {
                     VStack(spacing: 0) {
@@ -130,6 +129,11 @@ struct PlayerView: View {
                 }
             }
             .opacity(hero.playerContentOpacity)
+            .offset(y: hero.playerContentOffset)
+            // The controls are revealed by the same window as the backdrop,
+            // so they join the expansion instead of popping in on top of the
+            // browsing page.
+            .mask(HeroRevealMask(hero: hero))
         }
     }
 
