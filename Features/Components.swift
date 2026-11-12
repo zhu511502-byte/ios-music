@@ -135,11 +135,11 @@ struct PlayerBackdrop: View {
     let url: URL?
 
     var body: some View {
-        ZStack {
-            Color.black
+        GeometryReader { geometry in
+            ZStack {
+                Color.black
 
-            if let url {
-                GeometryReader { geometry in
+                if let url {
                     CachedArtworkImage(url: url) {
                         Color.black
                     }
@@ -148,15 +148,16 @@ struct PlayerBackdrop: View {
                     .blur(radius: 65)
                     .opacity(0.45)
                 }
+
+                FlowingGlowView(intensity: 0.72)
+
+                LinearGradient(
+                    colors: [.black.opacity(0.12), .black.opacity(0.42), .black],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
             }
-
-            FlowingGlowView(intensity: 0.72)
-
-            LinearGradient(
-                colors: [.black.opacity(0.12), .black.opacity(0.42), .black],
-                startPoint: .top,
-                endPoint: .bottom
-            )
+            .frame(width: geometry.size.width, height: geometry.size.height)
         }
     }
 }

@@ -63,6 +63,7 @@ struct MiniPlayerView: View {
 
         }
         .background(glassBackground)
+        .opacity(hero.hideMiniSurface ? 0 : 1)
         .contentShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
         .heroAnchor(.miniCapsule)
         .onTapGesture(perform: onTap)

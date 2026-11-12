@@ -107,6 +107,9 @@ final class HeroTransitionCoordinator: ObservableObject {
     @Published private(set) var hideMiniCover = false
     @Published private(set) var hideMiniText = false
     @Published private(set) var miniChromeOpacity = 1.0
+    /// The real capsule stays in the hierarchy for its anchors, but is not
+    /// painted while its animated replacement is travelling to the player.
+    @Published private(set) var hideMiniSurface = false
     /// The player page's own cover/title/artist are hidden while the hero is
     /// flying to/from them; the rest of the page stays visible.
     @Published private(set) var hidePlayerHero = false
@@ -121,6 +124,9 @@ final class HeroTransitionCoordinator: ObservableObject {
     /// They are also clipped by the same reveal shape, so nothing spills over
     /// the browsing page before the panel reaches it.
     @Published private(set) var playerContentOpacity = 1.0
+    /// A small travel on the chrome makes it belong to the unfolding page
+    /// rather than appearing as a stationary fade on top of the mini player.
+    @Published private(set) var playerContentOffset: CGFloat = 0
     @Published private(set) var lyricsPageOpacity = 0.0
     /// The lyrics background cross-fades over the player background while the
     /// cover flies to the header.
@@ -133,6 +139,10 @@ final class HeroTransitionCoordinator: ObservableObject {
     /// it never rescales or dips to black while the capsule grows.
     @Published private(set) var revealActive = false
     @Published private(set) var playerBackdropOpacity = 1.0
+    /// One continuous surface moves from the mini capsule to full screen.
+    /// Unlike a mask on the browsing page, this is visibly the capsule itself
+    /// lifting away from the tab bar and unfolding in both directions.
+    @Published private(set) var panelVisible = false
     @Published private(set) var panelFrom: CGRect = .zero
     @Published private(set) var panelTo: CGRect = .zero
     @Published private(set) var panelCornerFrom: CGFloat = 24
@@ -198,6 +208,7 @@ final class HeroTransitionCoordinator: ObservableObject {
         panelCornerTo = 0
         revealActive = true
         playerBackdropOpacity = 0
+        panelVisible = true
 
         anchors.removeValue(forKey: .playerCover)
         anchors.removeValue(forKey: .playerTitle)
@@ -207,12 +218,14 @@ final class HeroTransitionCoordinator: ObservableObject {
         lyricsPresented = false
         playerPageOpacity = 1
         playerContentOpacity = 0
+        playerContentOffset = 54
         lyricsPageOpacity = 0
         lyricsContentOpacity = 1
         hidePlayerHero = true
         hideLyricsHero = false
         hideMiniCover = true
         hideMiniText = true
+        hideMiniSurface = true
         miniChromeOpacity = 0
         heroVisible = true
 
@@ -236,21 +249,22 @@ final class HeroTransitionCoordinator: ObservableObject {
         // final progress value.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) { [weak self] in
             guard let self, self.pending == .openPlayer else { return }
-            withAnimation(.timingCurve(0.16, 0.82, 0.24, 1.0, duration: 0.46)) {
+            withAnimation(.timingCurve(0.22, 0.78, 0.22, 1.0, duration: 0.52)) {
                 self.progress = 1
             }
-            // The capsule's own glass is still visible at progress zero. The
-            // player backdrop fades in over it while the mask grows; there is
-            // no material panel and therefore no grey/black rectangle.
+            // The capsule's own glass is visible at progress zero. The moving
+            // panel becomes the player background while the page chrome joins
+            // the same flight.
             withAnimation(.easeOut(duration: 0.22)) {
                 self.playerBackdropOpacity = 1
             }
             // Page chrome joins the transition instead of appearing after it.
-            withAnimation(.easeOut(duration: 0.28).delay(0.14)) {
+            withAnimation(.easeOut(duration: 0.30).delay(0.14)) {
                 self.playerContentOpacity = 1
+                self.playerContentOffset = 0
             }
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.50) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.56) { [weak self] in
             self?.finishOpenPlayer()
         }
     }
@@ -273,6 +287,8 @@ final class HeroTransitionCoordinator: ObservableObject {
             playerBackdropOpacity = 1
             playerPageOpacity = 1
             playerContentOpacity = 1
+            playerContentOffset = 0
+            panelVisible = false
             hideMiniCover = false
             hideMiniText = false
             miniChromeOpacity = 1
@@ -299,39 +315,38 @@ final class HeroTransitionCoordinator: ObservableObject {
         panelCornerTo = 24
         revealActive = true
         playerBackdropOpacity = 1
+        panelVisible = true
 
         hidePlayerHero = true
         hideMiniCover = true
         hideMiniText = true
+        hideMiniSurface = true
         miniChromeOpacity = 0
         playerPageOpacity = 1
         playerContentOpacity = 1
+        playerContentOffset = 0
         heroVisible = true
 
         armWatchdog()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) { [weak self] in
             guard let self, self.pending == .closePlayer else { return }
-            withAnimation(.timingCurve(0.16, 0.82, 0.24, 1.0, duration: 0.42)) {
+            withAnimation(.timingCurve(0.30, 0.72, 0.24, 1.0, duration: 0.46)) {
                 self.progress = 1
             }
             // Controls leave with the shrinking page instead of vanishing on
             // the first frame of the close.
             withAnimation(.easeOut(duration: 0.24)) {
                 self.playerContentOpacity = 0
+                self.playerContentOffset = 32
             }
-            // Only in the last few percent, when the mask is essentially the
-            // capsule again, does the dark backdrop dissolve back into the
-            // mini player's glass. No grey panel is left behind.
-            withAnimation(.easeInOut(duration: 0.06).delay(0.36)) {
-                self.playerBackdropOpacity = 0
-            }
+
             // The capsule chrome arrives while the hero cover is still
             // landing, so the mini player does not pop in at the last frame.
             withAnimation(.easeOut(duration: 0.14).delay(0.28)) {
                 self.miniChromeOpacity = 1
             }
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.46) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.50) { [weak self] in
             self?.finishClosePlayer()
         }
     }
@@ -350,7 +365,10 @@ final class HeroTransitionCoordinator: ObservableObject {
             playerBackdropOpacity = 1
             playerPageOpacity = 0
             playerContentOpacity = 1
+            playerContentOffset = 0
             hidePlayerHero = false
+            hideMiniSurface = false
+            panelVisible = false
             hideMiniCover = false
             hideMiniText = false
             miniChromeOpacity = 1
@@ -661,7 +679,10 @@ final class HeroTransitionCoordinator: ObservableObject {
             revealActive = false
             playerBackdropOpacity = 1
             playerContentOpacity = 1
+            playerContentOffset = 0
             hidePlayerHero = false
+            hideMiniSurface = false
+            panelVisible = false
             hideMiniCover = false
             hideMiniText = false
             miniChromeOpacity = 1
@@ -672,7 +693,10 @@ final class HeroTransitionCoordinator: ObservableObject {
             revealActive = false
             playerBackdropOpacity = 1
             playerContentOpacity = 1
+            playerContentOffset = 0
             hidePlayerHero = false
+            hideMiniSurface = false
+            panelVisible = false
             hideMiniCover = false
             hideMiniText = false
             miniChromeOpacity = 1
@@ -735,6 +759,105 @@ final class HeroTransitionCoordinator: ObservableObject {
     }
     private var fallbackLyricsArtist: CGRect {
         CGRect(x: 120, y: 76, width: screenBounds.width - 220, height: 16)
+    }
+}
+
+/// The actual moving capsule. Its blurred artwork is kept full-screen behind
+/// the moving clip, so the image does not stretch into a dark rectangle while
+/// the capsule opens. The same surface also travels back down on close.
+struct HeroPanelView: View {
+    @ObservedObject var hero: HeroTransitionCoordinator
+
+    var body: some View {
+        GeometryReader { _ in
+            HeroPanelVisual(
+                progress: hero.progress,
+                from: hero.panelFrom,
+                to: hero.panelTo,
+                cornerFrom: hero.panelCornerFrom,
+                cornerTo: hero.panelCornerTo,
+                track: hero.heroTrack
+            )
+        }
+        .ignoresSafeArea()
+        .allowsHitTesting(false)
+    }
+}
+
+private struct HeroPanelVisual: View, Animatable {
+    var progress: CGFloat
+    let from: CGRect
+    let to: CGRect
+    let cornerFrom: CGFloat
+    let cornerTo: CGFloat
+    let track: MusicInfo?
+
+    var animatableData: CGFloat {
+        get { progress }
+        set { progress = newValue }
+    }
+
+    private func lerp(_ a: CGFloat, _ b: CGFloat) -> CGFloat {
+        a + (b - a) * min(max(progress, 0), 1)
+    }
+
+    var body: some View {
+        let frame = CGRect(
+            x: lerp(from.minX, to.minX),
+            y: lerp(from.minY, to.minY),
+            width: lerp(from.width, to.width),
+            height: lerp(from.height, to.height)
+        )
+        let p = min(max(progress, 0), 1)
+        // The capsule keeps its rounded silhouette while it lifts. Only the
+        // final part opens into square screen edges; closing reverses this.
+        let opening = cornerTo == 0
+        let cornerPhase = opening ? min(max((p - 0.70) / 0.30, 0), 1) : min(p / 0.65, 1)
+        let easedCorner = cornerPhase * cornerPhase * (3 - 2 * cornerPhase)
+        let radius = opening
+            ? cornerFrom * (1 - easedCorner)
+            : cornerTo * easedCorner
+        let artworkOpacity = opening
+            ? min(1, 0.16 + p * 1.2)
+            : max(0, 1 - p * 1.35)
+        let glassOpacity = opening ? max(0, 1 - p * 1.35) : min(1, p * p * 1.1)
+        let baseOpacity = opening ? max(0, 1 - p * 1.35) : p * p
+        let shadowOpacity = 0.34 * (1 - min(1, p * 1.5))
+
+        // The real capsule is already light glass. At the last frame the
+        // travelling surface must be that same light glass, not a black panel
+        // fading out over a white one.
+
+        GeometryReader { proxy in
+            let origin = proxy.frame(in: .global).origin
+            ZStack {
+                // Full-screen content is clipped by the moving capsule. The
+                // artwork therefore retains its scale instead of stretching
+                // from a 60 pt capsule into a full-screen rectangle.
+                PlayerBackdrop(url: track?.picURL)
+                    .frame(width: to.width, height: to.height)
+                    .position(x: to.midX, y: to.midY)
+                    .opacity(artworkOpacity)
+
+                RoundedRectangle(cornerRadius: radius, style: .continuous)
+                    .fill(.ultraThinMaterial)
+                    .opacity(glassOpacity)
+            }
+            .frame(width: max(frame.width, 1), height: max(frame.height, 1))
+            .background(
+                RoundedRectangle(cornerRadius: radius, style: .continuous)
+                    .fill(Color(red: 0.80, green: 0.81, blue: 0.84))
+                    .opacity(baseOpacity)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: max(radius, 0), style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: max(radius, 0), style: .continuous)
+                    .strokeBorder(Color.white.opacity(0.24 * glassOpacity), lineWidth: 0.8)
+            )
+            .position(x: frame.midX, y: frame.midY)
+            .shadow(color: .black.opacity(shadowOpacity), radius: 22, y: 10)
+            .offset(x: -origin.x, y: -origin.y)
+        }
     }
 }
 

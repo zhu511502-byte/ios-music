@@ -43,8 +43,9 @@ struct RootView: View {
                 // animatable capsule mask. It is never re-created or
                 // cross-faded at the end of the transition.
                 PlayerBackdrop(url: player.currentTrack?.picURL)
-                    .opacity(hero.playerBackdropOpacity)
-                    .mask(HeroRevealMask(hero: hero))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .opacity(hero.panelVisible ? 0 : hero.playerBackdropOpacity)
+                    .id(player.currentTrack?.id)
                     .ignoresSafeArea()
                     .allowsHitTesting(false)
                     .zIndex(0.5)
@@ -52,6 +53,13 @@ struct RootView: View {
                 PlayerView(onClose: closePlayer)
                     .zIndex(1)
                     .opacity(hero.playerPageOpacity)
+            }
+
+            if hero.panelVisible {
+                // This is the visible capsule itself, not just a reveal mask:
+                // it leaves the tab bar, unfolds, and returns on close.
+                HeroPanelView(hero: hero)
+                    .zIndex(50)
             }
 
             // The moving cover/title lives above every page. The pages only

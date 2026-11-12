@@ -13,10 +13,6 @@ struct PlayerView: View {
     @State private var autoPresentedLandscape = false
     @State private var isLandscape = false
 
-    private var artworkSize: CGFloat {
-        min(360, max(220, UIScreen.main.bounds.width - 48))
-    }
-
     private var albumName: String? {
         guard let value = player.currentTrack?.albumName, !value.isEmpty else { return nil }
         return value
@@ -30,7 +26,7 @@ struct PlayerView: View {
     var body: some View {
         ZStack {
             GeometryReader { geometry in
-                playerContent
+                playerContent(size: geometry.size)
                     .onAppear { updateOrientation(geometry.size) }
                     .onChange(of: geometry.size) { updateOrientation($0) }
             }
@@ -73,7 +69,7 @@ struct PlayerView: View {
         hero.closeLyrics()
     }
 
-    private var playerContent: some View {
+    private func playerContent(size: CGSize) -> some View {
         ZStack {
             VStack(spacing: 0) {
                 topBar
@@ -83,7 +79,9 @@ struct PlayerView: View {
 
                 ScrollView(showsIndicators: false) {
                     VStack(spacing: 0) {
-                        ArtworkView(url: player.currentTrack?.picURL, size: artworkSize, cornerRadius: 14)
+                        ArtworkView(url: player.currentTrack?.picURL,
+                                    size: min(360, max(220, size.width - 48)),
+                                    cornerRadius: 14)
                             .shadow(color: .black.opacity(0.55), radius: 34, y: 22)
                             .heroAnchor(.playerCover)
                             .opacity(hero.hidePlayerHero ? 0 : 1)
@@ -131,6 +129,7 @@ struct PlayerView: View {
                 }
             }
             .opacity(hero.playerContentOpacity)
+            .offset(y: hero.playerContentOffset)
             // The controls are revealed by the same window as the backdrop,
             // so they join the expansion instead of popping in on top of the
             // browsing page.
