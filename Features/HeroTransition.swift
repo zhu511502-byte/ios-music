@@ -801,6 +801,7 @@ struct HeroRevealMask: View {
                 }
             }
         }
+        .ignoresSafeArea()
     }
 }
 
