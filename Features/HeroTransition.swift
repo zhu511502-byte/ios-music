@@ -929,8 +929,7 @@ private struct HeroPanelVisual: View, Animatable {
             ? min(1, 0.16 + p * 1.2)
             : max(0, 1 - p * 1.35)
         let glassOpacity = opening ? max(0, 1 - p * 1.35) : min(1, p * p * 1.1)
-        let baseOpacity = opening ? max(0, 1 - p * 1.35) : p * p
-        let shadowOpacity = 0.34 * (1 - min(1, p * 1.5))
+        let shadowOpacity = 0.45 * (opening ? (1 - p) : p)
 
         // The real capsule is already light glass. At the last frame the
         // travelling surface must be that same light glass, not a black panel
@@ -947,23 +946,33 @@ private struct HeroPanelVisual: View, Animatable {
                     .position(x: to.midX - frame.minX, y: to.midY - frame.minY)
                     .opacity(artworkOpacity)
 
-                RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .fill(.ultraThinMaterial)
-                    .opacity(glassOpacity)
+                ZStack {
+                    RoundedRectangle(cornerRadius: radius, style: .continuous)
+                        .fill(.ultraThinMaterial)
+                    RoundedRectangle(cornerRadius: radius, style: .continuous)
+                        .fill(
+                            LinearGradient(
+                                colors: [
+                                    .white.opacity(0.16),
+                                    .white.opacity(0.045),
+                                    .clear,
+                                    .white.opacity(0.035)
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                }
+                .opacity(glassOpacity)
             }
             .frame(width: max(frame.width, 1), height: max(frame.height, 1))
-            .background(
-                RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .fill(Color(red: 0.80, green: 0.81, blue: 0.84))
-                    .opacity(baseOpacity)
-            )
             .clipShape(RoundedRectangle(cornerRadius: max(radius, 0), style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: max(radius, 0), style: .continuous)
                     .strokeBorder(Color.white.opacity(0.24 * glassOpacity), lineWidth: 0.8)
             )
             .position(x: frame.midX, y: frame.midY)
-            .shadow(color: .black.opacity(shadowOpacity), radius: 22, y: 10)
+            .shadow(color: .black.opacity(shadowOpacity), radius: 18, y: 9)
             .offset(x: -origin.x, y: -origin.y)
         }
     }
