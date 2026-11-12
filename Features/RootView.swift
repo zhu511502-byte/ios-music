@@ -50,16 +50,24 @@ struct RootView: View {
                     .allowsHitTesting(false)
                     .zIndex(0.5)
 
-                PlayerView(onClose: closePlayer)
-                    .zIndex(1)
-                    .opacity(hero.playerPageOpacity)
+                HeroScaledPlayer(
+                    progress: hero.playerScaleActive ? hero.progress : 1,
+                    from: hero.panelFrom,
+                    to: hero.panelTo,
+                    cornerFrom: hero.panelCornerFrom,
+                    cornerTo: hero.panelCornerTo
+                ) {
+                    PlayerView(onClose: closePlayer)
+                }
+                .zIndex(1)
+                .opacity(hero.playerPageOpacity)
             }
 
             if hero.panelVisible {
                 // This is the visible capsule itself, not just a reveal mask:
                 // it leaves the tab bar, unfolds, and returns on close.
                 HeroPanelView(hero: hero)
-                    .zIndex(50)
+                    .zIndex(0.6)
             }
 
             // The moving cover/title lives above every page. The pages only
