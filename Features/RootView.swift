@@ -39,14 +39,18 @@ struct RootView: View {
             .tint(AppTheme.accent)
 
             if hero.playerPresented {
+                // One real full-screen backdrop, revealed through the
+                // animatable capsule mask. It is never re-created or
+                // cross-faded at the end of the transition.
+                PlayerBackdrop(url: player.currentTrack?.picURL)
+                    .opacity(hero.playerBackdropOpacity)
+                    .mask(HeroRevealMask(hero: hero))
+                    .ignoresSafeArea()
+                    .zIndex(0.5)
+
                 PlayerView(onClose: closePlayer)
                     .zIndex(1)
                     .opacity(hero.playerPageOpacity)
-            }
-
-            if hero.panelVisible {
-                HeroPanelView(hero: hero)
-                    .zIndex(50)
             }
 
             // The moving cover/title lives above every page. The pages only
@@ -90,7 +94,6 @@ struct RootView: View {
             // transition into the player.
             if player.currentTrack != nil, selectedTab == tag {
                 MiniPlayerView(onTap: openPlayer)
-                    .opacity(hero.hideMiniContent ? 0 : 1)
                     .padding(.horizontal, 10)
                     .padding(.bottom, 4)
             }

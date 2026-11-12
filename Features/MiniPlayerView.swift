@@ -3,6 +3,7 @@ import SwiftUI
 struct MiniPlayerView: View {
     @EnvironmentObject private var player: PlaybackCoordinator
     @EnvironmentObject private var theme: ThemeStore
+    @EnvironmentObject private var hero: HeroTransitionCoordinator
     let onTap: () -> Void
 
     @State private var lyrics: Lyrics?
@@ -13,6 +14,7 @@ struct MiniPlayerView: View {
                 ArtworkView(url: player.currentTrack?.picURL, size: 46, cornerRadius: 10)
                     .shadow(color: .black.opacity(0.3), radius: 7, y: 4)
                     .heroAnchor(.miniCover)
+                    .opacity(hero.hideMiniCover ? 0 : 1)
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(player.currentTrack?.name ?? "")
@@ -27,6 +29,7 @@ struct MiniPlayerView: View {
                         .heroAnchor(.miniArtist)
                     MiniLyricLine(clock: player.clock, lyrics: lyrics)
                 }
+                .opacity(hero.hideMiniText ? 0 : 1)
 
                 Spacer(minLength: 6)
 
@@ -40,6 +43,7 @@ struct MiniPlayerView: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .opacity(hero.miniChromeOpacity)
 
                 Button {
                     player.next()
@@ -51,6 +55,7 @@ struct MiniPlayerView: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .opacity(hero.miniChromeOpacity)
             }
             .padding(.horizontal, 11)
             .padding(.top, 8)
@@ -132,4 +137,3 @@ private struct MiniLyricLine: View {
         return lyrics.lines.first?.text ?? " "
     }
 }
-

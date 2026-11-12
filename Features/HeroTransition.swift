@@ -102,39 +102,41 @@ final class HeroTransitionCoordinator: ObservableObject {
     @Published private(set) var playerPresented = false
     @Published private(set) var lyricsPresented = false
 
-    /// The mini player is hidden as soon as the hero takes over its artwork.
-    @Published private(set) var hideMiniContent = false
+    /// The mini player's artwork is hidden while the hero owns it. The rest
+    /// of the capsule chrome can fade independently when the player closes.
+    @Published private(set) var hideMiniCover = false
+    @Published private(set) var hideMiniText = false
+    @Published private(set) var miniChromeOpacity = 1.0
     /// The player page's own cover/title/artist are hidden while the hero is
     /// flying to/from them; the rest of the page stays visible.
     @Published private(set) var hidePlayerHero = false
     /// Same for the lyrics header.
     @Published private(set) var hideLyricsHero = false
 
-    /// A very light fade-in for the destination page. It deliberately starts
-    /// mostly opaque so the light browsing list can never show through white
-    /// player text.
+    /// Page-level opacity is kept at one while the player exists. The reveal
+    /// is done by masking the real player background, so there is no second
+    /// surface that has to be cross-faded away at the end.
     @Published private(set) var playerPageOpacity = 0.0
-    /// Player controls/title fade independently from the background, so a
-    /// lyrics-background cross-fade never shows two sets of controls at once.
+    /// Player controls fade/slide in while the background is still unfolding.
+    /// They are also clipped by the same reveal shape, so nothing spills over
+    /// the browsing page before the panel reaches it.
     @Published private(set) var playerContentOpacity = 1.0
     @Published private(set) var lyricsPageOpacity = 0.0
     /// The lyrics background cross-fades over the player background while the
     /// cover flies to the header.
     @Published private(set) var lyricsBackgroundOpacity = 1.0
-    /// The lyrics background stays visible during the cover flight, while the
-    /// text/controls wait until the hero has landed. This avoids a giant album
-    /// cover sweeping across the lyric lines.
+    /// Lyrics text/controls join the flight instead of popping in afterwards.
     @Published private(set) var lyricsContentOpacity = 1.0
 
-    /// A mini-player-shaped glass panel that unfolds into the player page.
-    @Published private(set) var panelVisible = false
+    /// The player background is revealed through one animatable rounded-rect
+    /// mask. The blurred artwork itself stays full-screen the whole time, so
+    /// it never rescales or dips to black while the capsule grows.
+    @Published private(set) var revealActive = false
+    @Published private(set) var playerBackdropOpacity = 1.0
     @Published private(set) var panelFrom: CGRect = .zero
     @Published private(set) var panelTo: CGRect = .zero
     @Published private(set) var panelCornerFrom: CGFloat = 24
     @Published private(set) var panelCornerTo: CGFloat = 0
-    @Published private(set) var panelBackdropFrom: Double = 0.06
-    @Published private(set) var panelBackdropTo: Double = 1.0
-    @Published private(set) var panelOpacity = 1.0
 
     @Published private(set) var heroVisible = false
     @Published private(set) var heroTrack: MusicInfo?
@@ -194,10 +196,8 @@ final class HeroTransitionCoordinator: ObservableObject {
         panelTo = screenBounds
         panelCornerFrom = 24
         panelCornerTo = 0
-        panelBackdropFrom = 0.06
-        panelBackdropTo = 1.0
-        panelOpacity = 1
-        panelVisible = true
+        revealActive = true
+        playerBackdropOpacity = 0
 
         anchors.removeValue(forKey: .playerCover)
         anchors.removeValue(forKey: .playerTitle)
@@ -205,13 +205,15 @@ final class HeroTransitionCoordinator: ObservableObject {
 
         playerPresented = true
         lyricsPresented = false
-        playerPageOpacity = 0
+        playerPageOpacity = 1
         playerContentOpacity = 0
         lyricsPageOpacity = 0
         lyricsContentOpacity = 1
         hidePlayerHero = true
         hideLyricsHero = false
-        hideMiniContent = true
+        hideMiniCover = true
+        hideMiniText = true
+        miniChromeOpacity = 0
         heroVisible = true
 
         armWatchdog()
@@ -229,16 +231,26 @@ final class HeroTransitionCoordinator: ObservableObject {
         progress = 0
         hidePlayerHero = true
 
-        // One layout pass at progress 0 before the spring starts. This also
+        // One layout pass at progress 0 before the animation starts. This also
         // guarantees we never try to animate from the previous transition's
         // final progress value.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) { [weak self] in
             guard let self, self.pending == .openPlayer else { return }
-            withAnimation(.timingCurve(0.16, 0.82, 0.24, 1.0, duration: 0.44)) {
+            withAnimation(.timingCurve(0.16, 0.82, 0.24, 1.0, duration: 0.46)) {
                 self.progress = 1
             }
+            // The capsule's own glass is still visible at progress zero. The
+            // player backdrop fades in over it while the mask grows; there is
+            // no material panel and therefore no grey/black rectangle.
+            withAnimation(.easeOut(duration: 0.22)) {
+                self.playerBackdropOpacity = 1
+            }
+            // Page chrome joins the transition instead of appearing after it.
+            withAnimation(.easeOut(duration: 0.28).delay(0.14)) {
+                self.playerContentOpacity = 1
+            }
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.46) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.50) { [weak self] in
             self?.finishOpenPlayer()
         }
     }
@@ -250,24 +262,23 @@ final class HeroTransitionCoordinator: ObservableObject {
         fallbackWorkItem?.cancel()
         watchdogWorkItem?.cancel()
 
-        progress = 1
-        playerPageOpacity = 1
-        hideMiniContent = false
-        hidePlayerHero = true
-        // Cross-fade the panel away while the page chrome fades in. Both
-        // surfaces use PlayerBackdrop, so the hand-off has no blank frame or
-        // colour flash.
-        withAnimation(.easeOut(duration: 0.16)) {
-            panelOpacity = 0
+        // Everything has already reached its final value, so this is a pure
+        // state swap without another fade. That removes the end-of-animation
+        // pause that used to happen while the panel faded out.
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            progress = 1
+            revealActive = false
+            playerBackdropOpacity = 1
+            playerPageOpacity = 1
             playerContentOpacity = 1
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.16) { [weak self] in
-            guard let self else { return }
-            self.panelVisible = false
-            self.panelOpacity = 1
-            self.hidePlayerHero = false
-            self.heroVisible = false
-            self.isAnimating = false
+            hideMiniCover = false
+            hideMiniText = false
+            miniChromeOpacity = 1
+            hidePlayerHero = false
+            heroVisible = false
+            isAnimating = false
         }
     }
 
@@ -286,14 +297,15 @@ final class HeroTransitionCoordinator: ObservableObject {
         panelTo = frame(.miniCapsule, fallback: fallbackMiniCapsule)
         panelCornerFrom = 0
         panelCornerTo = 24
-        panelBackdropFrom = 1.0
-        panelBackdropTo = 0.06
-        panelOpacity = 1
-        panelVisible = true
+        revealActive = true
+        playerBackdropOpacity = 1
 
         hidePlayerHero = true
-        hideMiniContent = true
-        playerPageOpacity = 0
+        hideMiniCover = true
+        hideMiniText = true
+        miniChromeOpacity = 0
+        playerPageOpacity = 1
+        playerContentOpacity = 1
         heroVisible = true
 
         armWatchdog()
@@ -302,8 +314,24 @@ final class HeroTransitionCoordinator: ObservableObject {
             withAnimation(.timingCurve(0.16, 0.82, 0.24, 1.0, duration: 0.42)) {
                 self.progress = 1
             }
+            // Controls leave with the shrinking page, but at a faster rate
+            // than the geometry so they never look stuck at full size.
+            withAnimation(.easeOut(duration: 0.16)) {
+                self.playerContentOpacity = 0
+            }
+            // Only in the last few percent, when the mask is essentially the
+            // capsule again, does the dark backdrop dissolve back into the
+            // mini player's glass. No grey panel is left behind.
+            withAnimation(.easeInOut(duration: 0.06).delay(0.36)) {
+                self.playerBackdropOpacity = 0
+            }
+            // The capsule chrome arrives while the hero cover is still
+            // landing, so the mini player does not pop in at the last frame.
+            withAnimation(.easeOut(duration: 0.14).delay(0.28)) {
+                self.miniChromeOpacity = 1
+            }
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.44) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.46) { [weak self] in
             self?.finishClosePlayer()
         }
     }
@@ -314,13 +342,21 @@ final class HeroTransitionCoordinator: ObservableObject {
         targetAnimationStarted = false
         watchdogWorkItem?.cancel()
 
-        playerPresented = false
-        hidePlayerHero = false
-        hideMiniContent = false
-        heroVisible = false
-        playerPageOpacity = 0
-        panelVisible = false
-        isAnimating = false
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            playerPresented = false
+            revealActive = false
+            playerBackdropOpacity = 1
+            playerPageOpacity = 0
+            playerContentOpacity = 1
+            hidePlayerHero = false
+            hideMiniCover = false
+            hideMiniText = false
+            miniChromeOpacity = 1
+            heroVisible = false
+            isAnimating = false
+        }
     }
 
     // MARK: - Lyrics
@@ -343,7 +379,6 @@ final class HeroTransitionCoordinator: ObservableObject {
         lyricsPageOpacity = 1
         lyricsBackgroundOpacity = 0
         lyricsContentOpacity = 0
-        playerContentOpacity = 0
         hidePlayerHero = true
         hideLyricsHero = true
         heroVisible = true
@@ -365,14 +400,24 @@ final class HeroTransitionCoordinator: ObservableObject {
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) { [weak self] in
             guard let self, self.pending == .openLyrics else { return }
-            withAnimation(.timingCurve(0.16, 0.82, 0.24, 1.0, duration: 0.40)) {
+            withAnimation(.timingCurve(0.16, 0.82, 0.24, 1.0, duration: 0.42)) {
                 self.progress = 1
             }
-            withAnimation(.easeOut(duration: 0.28)) {
+            // The player chrome leaves while the lyric backdrop and text
+            // arrive, so the page never goes through a flat black frame.
+            withAnimation(.easeOut(duration: 0.18)) {
+                self.playerContentOpacity = 0
+            }
+            withAnimation(.easeInOut(duration: 0.34)) {
                 self.lyricsBackgroundOpacity = 1
             }
+            // Text waits until the cover is close to the header, then joins
+            // the last part of the flight instead of popping after it.
+            withAnimation(.easeOut(duration: 0.20).delay(0.22)) {
+                self.lyricsContentOpacity = 1
+            }
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.42) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.46) { [weak self] in
             self?.finishOpenLyrics()
         }
     }
@@ -384,19 +429,17 @@ final class HeroTransitionCoordinator: ObservableObject {
         fallbackWorkItem?.cancel()
         watchdogWorkItem?.cancel()
 
-        progress = 1
-        lyricsPageOpacity = 1
-        lyricsBackgroundOpacity = 1
-        lyricsContentOpacity = 0
-        hideLyricsHero = true
-        withAnimation(.easeOut(duration: 0.14)) {
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            progress = 1
+            lyricsPageOpacity = 1
+            lyricsBackgroundOpacity = 1
             lyricsContentOpacity = 1
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.14) { [weak self] in
-            guard let self else { return }
-            self.hideLyricsHero = false
-            self.heroVisible = false
-            self.isAnimating = false
+            playerContentOpacity = 0
+            hideLyricsHero = false
+            heroVisible = false
+            isAnimating = false
         }
     }
 
@@ -409,13 +452,14 @@ final class HeroTransitionCoordinator: ObservableObject {
         let from = lyricsSnapshot()
         let to = playerSnapshot()
 
-        // Keep the lyrics page for its background cross-fade, but hide its
-        // content and header immediately. The player page underneath becomes
-        // visible as the lyric backdrop fades out.
+        // Keep the lyrics page while its content and backdrop cross-fade
+        // away. The player controls underneath fade back in during the same
+        // flight instead of appearing after it.
         lyricsPresented = true
         lyricsPageOpacity = 1
         lyricsBackgroundOpacity = 1
-        lyricsContentOpacity = 0
+        lyricsContentOpacity = 1
+        playerContentOpacity = 0
         hideLyricsHero = true
         hidePlayerHero = true
         heroVisible = true
@@ -426,20 +470,20 @@ final class HeroTransitionCoordinator: ObservableObject {
         armWatchdog()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) { [weak self] in
             guard let self, self.pending == .closeLyrics else { return }
-            withAnimation(.timingCurve(0.16, 0.82, 0.24, 1.0, duration: 0.40)) {
+            withAnimation(.timingCurve(0.16, 0.82, 0.24, 1.0, duration: 0.42)) {
                 self.progress = 1
             }
-            withAnimation(.easeOut(duration: 0.30)) {
+            withAnimation(.easeOut(duration: 0.16)) {
+                self.lyricsContentOpacity = 0
+            }
+            withAnimation(.easeInOut(duration: 0.30)) {
                 self.lyricsBackgroundOpacity = 0
             }
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.24) { [weak self] in
-            guard let self, self.pending == .closeLyrics else { return }
-            withAnimation(.easeOut(duration: 0.12)) {
+            withAnimation(.easeOut(duration: 0.20).delay(0.16)) {
                 self.playerContentOpacity = 1
             }
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.42) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.46) { [weak self] in
             self?.finishCloseLyrics()
         }
     }
@@ -450,15 +494,19 @@ final class HeroTransitionCoordinator: ObservableObject {
         targetAnimationStarted = false
         watchdogWorkItem?.cancel()
 
-        lyricsPresented = false
-        playerContentOpacity = 1
-        hidePlayerHero = false
-        hideLyricsHero = false
-        heroVisible = false
-        lyricsPageOpacity = 0
-        lyricsBackgroundOpacity = 0
-        lyricsContentOpacity = 0
-        isAnimating = false
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            lyricsPresented = false
+            playerContentOpacity = 1
+            hidePlayerHero = false
+            hideLyricsHero = false
+            heroVisible = false
+            lyricsPageOpacity = 0
+            lyricsBackgroundOpacity = 0
+            lyricsContentOpacity = 0
+            isAnimating = false
+        }
     }
 
     // MARK: - Snapshots
@@ -610,16 +658,24 @@ final class HeroTransitionCoordinator: ObservableObject {
         switch current {
         case .openPlayer:
             playerPageOpacity = 1
-            panelVisible = false
+            revealActive = false
+            playerBackdropOpacity = 1
+            playerContentOpacity = 1
             hidePlayerHero = false
-            hideMiniContent = false
+            hideMiniCover = false
+            hideMiniText = false
+            miniChromeOpacity = 1
             heroVisible = false
         case .closePlayer:
             playerPresented = false
             playerPageOpacity = 0
-            panelVisible = false
+            revealActive = false
+            playerBackdropOpacity = 1
+            playerContentOpacity = 1
             hidePlayerHero = false
-            hideMiniContent = false
+            hideMiniCover = false
+            hideMiniText = false
+            miniChromeOpacity = 1
             heroVisible = false
         case .openLyrics:
             lyricsPageOpacity = 1
@@ -682,87 +738,70 @@ final class HeroTransitionCoordinator: ObservableObject {
     }
 }
 
-/// The mini-player capsule unfolding into the player page. It is a separate
-/// surface above the (still hidden) player page; because both use
-/// `PlayerBackdrop`, the hand-off when the panel reaches full screen is
-/// colour-identical.
-struct HeroPanelView: View {
-    @ObservedObject var hero: HeroTransitionCoordinator
-
-    var body: some View {
-        GeometryReader { proxy in
-            let origin = proxy.frame(in: .global).origin
-            HeroPanelVisual(
-                progress: hero.progress,
-                from: hero.panelFrom,
-                to: hero.panelTo,
-                cornerFrom: hero.panelCornerFrom,
-                cornerTo: hero.panelCornerTo,
-                backdropFrom: hero.panelBackdropFrom,
-                backdropTo: hero.panelBackdropTo,
-                track: hero.heroTrack
-            )
-            .offset(x: -origin.x, y: -origin.y)
-            .opacity(hero.panelOpacity)
-        }
-        .ignoresSafeArea()
-        .allowsHitTesting(false)
-    }
-}
-
-private struct HeroPanelVisual: View, Animatable {
+/// An animatable rounded rectangle used as a mask over the *real* player
+/// background. The background stays full-screen; only this window grows or
+/// shrinks. That keeps the blurred artwork at a constant scale and removes the
+/// dark flash that happened when a small panel stretched its own backdrop.
+struct HeroRevealShape: Shape {
     var progress: CGFloat
     let from: CGRect
     let to: CGRect
     let cornerFrom: CGFloat
     let cornerTo: CGFloat
-    let backdropFrom: Double
-    let backdropTo: Double
-    let track: MusicInfo?
 
     var animatableData: CGFloat {
         get { progress }
         set { progress = newValue }
     }
 
-    private func lerp(_ a: CGFloat, _ b: CGFloat) -> CGFloat {
-        a + (b - a) * min(max(progress, 0), 1)
+    private func smoothstep(_ value: CGFloat) -> CGFloat {
+        let t = min(max(value, 0), 1)
+        return t * t * (3 - 2 * t)
     }
 
-    var body: some View {
-        let frame = CGRect(
-            x: lerp(from.minX, to.minX),
-            y: lerp(from.minY, to.minY),
-            width: lerp(from.width, to.width),
-            height: lerp(from.height, to.height)
-        )
+    func path(in rect: CGRect) -> Path {
         let p = min(max(progress, 0), 1)
-        // Keep the card corners rounded through almost the whole expansion;
-        // only square them off in the final few percent, where the panel is
-        // already the full page. Linear interpolation made the corners look
-        // square halfway through the animation.
+        let frame = CGRect(
+            x: from.minX + (to.minX - from.minX) * p,
+            y: from.minY + (to.minY - from.minY) * p,
+            width: from.width + (to.width - from.width) * p,
+            height: from.height + (to.height - from.height) * p
+        )
+        // Opening: hold the capsule radius until the very end, then square
+        // off. Closing: stay square while the page is still large, and only
+        // round the corners once the shape is close to the capsule.
         let radius: CGFloat = cornerTo == 0
-            ? cornerFrom * (1 - min(max((p - 0.88) / 0.12, 0), 1))
-            : cornerTo * min(p / 0.15, 1)
-        let backdropOpacity = backdropFrom + (backdropTo - backdropFrom) * Double(p)
+            ? cornerFrom * (1 - smoothstep((p - 0.86) / 0.14))
+            : cornerTo * smoothstep((p - 0.62) / 0.30)
+        return RoundedRectangle(cornerRadius: max(radius, 0), style: .continuous)
+            .path(in: frame)
+    }
+}
 
-        ZStack {
-            ZStack {
-                RoundedRectangle(cornerRadius: max(radius, 0), style: .continuous)
-                    .fill(.ultraThinMaterial)
+/// Aligns the global anchor frames with whatever local coordinate space the
+/// masked view happens to use (safe area or full screen).
+struct HeroRevealMask: View {
+    @ObservedObject var hero: HeroTransitionCoordinator
 
-                PlayerBackdrop(url: track?.picURL)
-                    .opacity(backdropOpacity)
+    var body: some View {
+        GeometryReader { proxy in
+            let origin = proxy.frame(in: .global).origin
+            Group {
+                if hero.revealActive {
+                    HeroRevealShape(
+                        progress: hero.progress,
+                        from: hero.panelFrom.offsetBy(dx: -origin.x, dy: -origin.y),
+                        to: hero.panelTo.offsetBy(dx: -origin.x, dy: -origin.y),
+                        cornerFrom: hero.panelCornerFrom,
+                        cornerTo: hero.panelCornerTo
+                    )
+                    .fill(Color.white)
+                } else {
+                    Rectangle().fill(Color.white)
+                }
             }
-            .frame(width: max(frame.width, 1), height: max(frame.height, 1))
-            .clipShape(RoundedRectangle(cornerRadius: max(radius, 0), style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: max(radius, 0), style: .continuous)
-                    .strokeBorder(Color.white.opacity(0.18), lineWidth: 0.8)
-            )
-            .position(x: frame.midX, y: frame.midY)
-            .shadow(color: .black.opacity(0.42), radius: 24, y: 10)
         }
+        .ignoresSafeArea()
     }
 }
 

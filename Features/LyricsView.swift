@@ -77,7 +77,6 @@ struct LyricsView: View {
         .sheet(isPresented: $showLyricsSettings) {
             LyricsSettingsView()
         }
-        .background(Color.black.ignoresSafeArea())
         .preferredColorScheme(.dark)
     }
 
@@ -467,17 +466,14 @@ struct LyricsView: View {
             // never the browsing background from Settings.
             if let url = player.currentTrack?.picURL {
                 GeometryReader { geometry in
-                    AsyncImage(url: url) { phase in
-                        if let image = phase.image {
-                            image.resizable()
-                                .scaledToFill()
-                                .frame(width: geometry.size.width, height: geometry.size.height)
-                                .clipped()
-                                .blur(radius: 65)
-                                .scaleEffect(1.12)
-                                .opacity(0.55)
-                        }
+                    CachedArtworkImage(url: url) {
+                        Color.black
                     }
+                    .frame(width: geometry.size.width, height: geometry.size.height)
+                    .clipped()
+                    .blur(radius: 65)
+                    .scaleEffect(1.12)
+                    .opacity(0.55)
                 }
                 .ignoresSafeArea()
             }

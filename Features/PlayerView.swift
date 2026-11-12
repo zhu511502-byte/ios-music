@@ -60,7 +60,6 @@ struct PlayerView: View {
                 if !hero.lyricsPresented { openLyrics() }
             }
         }
-        .background(Color.black.ignoresSafeArea())
         .preferredColorScheme(.dark)
     }
 
@@ -78,7 +77,6 @@ struct PlayerView: View {
 
     private var playerContent: some View {
         ZStack {
-            background
             VStack(spacing: 0) {
                 topBar
                     .padding(.horizontal, 24)
@@ -94,7 +92,6 @@ struct PlayerView: View {
                             .padding(.top, 22)
 
                         titleBlock
-                            .opacity(hero.hidePlayerHero ? 0 : 1)
                             .padding(.top, 24)
 
                         PlayerProgressView(clock: player.clock, duration: player.duration) { value in
@@ -136,6 +133,10 @@ struct PlayerView: View {
                 }
             }
             .opacity(hero.playerContentOpacity)
+            // The controls are revealed by the same window as the backdrop,
+            // so they join the expansion instead of popping in on top of the
+            // browsing page.
+            .mask(HeroRevealMask(hero: hero))
         }
     }
 
@@ -157,13 +158,6 @@ struct PlayerView: View {
 
     private func openLyrics() {
         hero.openLyrics()
-    }
-
-    // MARK: - Background
-
-    private var background: some View {
-        PlayerBackdrop(url: player.currentTrack?.picURL)
-            .ignoresSafeArea()
     }
 
     // MARK: - Header
@@ -222,11 +216,13 @@ struct PlayerView: View {
                     .foregroundStyle(.white)
                     .lineLimit(2)
                     .heroAnchor(.playerTitle)
+                    .opacity(hero.hidePlayerHero ? 0 : 1)
                 Text(player.currentTrack?.singer ?? "")
                     .font(.title3)
                     .foregroundStyle(.white.opacity(0.62))
                     .lineLimit(1)
                     .heroAnchor(.playerArtist)
+                    .opacity(hero.hidePlayerHero ? 0 : 1)
                 if let albumName = albumName {
                     Text(albumName)
                         .font(.subheadline)
