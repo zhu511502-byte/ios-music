@@ -314,9 +314,9 @@ final class HeroTransitionCoordinator: ObservableObject {
             withAnimation(.timingCurve(0.16, 0.82, 0.24, 1.0, duration: 0.42)) {
                 self.progress = 1
             }
-            // Controls leave with the shrinking page, but at a faster rate
-            // than the geometry so they never look stuck at full size.
-            withAnimation(.easeOut(duration: 0.16)) {
+            // Controls leave with the shrinking page instead of vanishing on
+            // the first frame of the close.
+            withAnimation(.easeOut(duration: 0.24)) {
                 self.playerContentOpacity = 0
             }
             // Only in the last few percent, when the mask is essentially the
@@ -801,7 +801,6 @@ struct HeroRevealMask: View {
                 }
             }
         }
-        .ignoresSafeArea()
     }
 }
 

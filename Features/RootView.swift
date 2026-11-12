@@ -46,6 +46,7 @@ struct RootView: View {
                     .opacity(hero.playerBackdropOpacity)
                     .mask(HeroRevealMask(hero: hero))
                     .ignoresSafeArea()
+                    .allowsHitTesting(false)
                     .zIndex(0.5)
 
                 PlayerView(onClose: closePlayer)

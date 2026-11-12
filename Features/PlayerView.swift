@@ -4,8 +4,6 @@ import UIKit
 struct PlayerView: View {
     @EnvironmentObject private var player: PlaybackCoordinator
     @EnvironmentObject private var library: LibraryStore
-    @EnvironmentObject private var settings: SettingsStore
-    @EnvironmentObject private var theme: ThemeStore
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var hero: HeroTransitionCoordinator
 
